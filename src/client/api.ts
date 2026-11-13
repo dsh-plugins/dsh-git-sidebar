@@ -12,7 +12,8 @@
  */
 
 import type {
-  CommitOutcome, DiffArgs, DiffPayload, SnapshotProblem, StatusSnapshot, WriteOutcome,
+  BranchList, CommitDetailArgs, CommitOutcome, DiffArgs, DiffPayload, HistoryPage, SnapshotProblem, StashEntry,
+  StatusSnapshot, SyncAction, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_NAMESPACE } from '../shared.ts'
 import { gitSidebarContribution, type RemoteContribution, type ZodLike } from '../remote-descriptor.ts'
@@ -118,6 +119,34 @@ export interface GitSidebarRemote {
     readonly includeUntracked: boolean
   }): Promise<RemoteResult<WriteOutcome>>
   commit(args: { readonly sessionId: string; readonly message: string }): Promise<RemoteResult<CommitOutcome>>
+  history(args: {
+    readonly sessionId: string
+    readonly limit: number
+    readonly skip: number
+  }): Promise<RemoteResult<HistoryPage>>
+  commitDetail(args: CommitDetailArgs): Promise<RemoteResult<DiffPayload>>
+  branches(args: { readonly sessionId: string }): Promise<RemoteResult<BranchList>>
+  checkout(args: { readonly sessionId: string; readonly branch: string }): Promise<RemoteResult<WriteOutcome>>
+  createBranch(args: {
+    readonly sessionId: string
+    readonly name: string
+    readonly from?: string
+  }): Promise<RemoteResult<WriteOutcome>>
+  stashes(args: { readonly sessionId: string }): Promise<RemoteResult<readonly StashEntry[]>>
+  stash(args: {
+    readonly sessionId: string
+    readonly message?: string
+  }): Promise<RemoteResult<WriteOutcome>>
+  stashApply(args: {
+    readonly sessionId: string
+    readonly index: number
+    readonly drop: boolean
+  }): Promise<RemoteResult<WriteOutcome>>
+  stashDrop(args: { readonly sessionId: string; readonly index: number }): Promise<RemoteResult<WriteOutcome>>
+  sync(args: {
+    readonly sessionId: string
+    readonly action: SyncAction
+  }): Promise<RemoteResult<WriteOutcome>>
 }
 
 /**
@@ -131,6 +160,16 @@ export interface GitSidebarApi {
   discard(sessionId: string, paths: readonly string[], includeUntracked: boolean): Promise<WriteOutcome>
   commit(sessionId: string, message: string): Promise<CommitOutcome>
   requestDiff(args: DiffArgs, signal?: AbortSignal): Promise<DiffPayload>
+  history(sessionId: string, limit: number, skip: number): Promise<HistoryPage>
+  requestCommit(args: CommitDetailArgs, signal?: AbortSignal): Promise<DiffPayload>
+  branches(sessionId: string): Promise<BranchList>
+  checkout(sessionId: string, branch: string): Promise<WriteOutcome>
+  createBranch(sessionId: string, name: string): Promise<WriteOutcome>
+  stashes(sessionId: string): Promise<readonly StashEntry[]>
+  stash(sessionId: string, message?: string): Promise<WriteOutcome>
+  stashApply(sessionId: string, index: number, drop: boolean): Promise<WriteOutcome>
+  stashDrop(sessionId: string, index: number): Promise<WriteOutcome>
+  sync(sessionId: string, action: SyncAction): Promise<WriteOutcome>
 }
 
 /** The namespace mount, started at apply time and awaited by the first body that draws. */
@@ -246,8 +285,65 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
         return { kind: 'error', message: messageOf(error) }
       }
     },
+    async history(sessionId: string, limit: number, skip: number): Promise<HistoryPage> {
+      try {
+        const result = await remote.history({ sessionId, limit, skip })
+        if (result.ok) return result.value
+        return { commits: [], hasMore: false }
+      } catch {
+        return { commits: [], hasMore: false }
+      }
+    },
+    async requestCommit(args: CommitDetailArgs, signal?: AbortSignal): Promise<DiffPayload> {
+      void signal
+      try {
+        const result = await remote.commitDetail(args)
+        if (result.ok) return result.value
+        return { kind: 'error', message: result.error.message }
+      } catch (error) {
+        return { kind: 'error', message: messageOf(error) }
+      }
+    },
+    async branches(sessionId: string): Promise<BranchList> {
+      try {
+        const result = await remote.branches({ sessionId })
+        if (result.ok) return result.value
+        return EMPTY_BRANCHES
+      } catch {
+        return EMPTY_BRANCHES
+      }
+    },
+    checkout(sessionId: string, branch: string): Promise<WriteOutcome> {
+      return foldWrite(() => remote.checkout({ sessionId, branch }))
+    },
+    createBranch(sessionId: string, name: string): Promise<WriteOutcome> {
+      return foldWrite(() => remote.createBranch({ sessionId, name }))
+    },
+    async stashes(sessionId: string): Promise<readonly StashEntry[]> {
+      try {
+        const result = await remote.stashes({ sessionId })
+        return result.ok ? result.value : []
+      } catch {
+        return []
+      }
+    },
+    stash(sessionId: string, message?: string): Promise<WriteOutcome> {
+      return foldWrite(() => remote.stash(message === undefined ? { sessionId } : { sessionId, message }))
+    },
+    stashApply(sessionId: string, index: number, drop: boolean): Promise<WriteOutcome> {
+      return foldWrite(() => remote.stashApply({ sessionId, index, drop }))
+    },
+    stashDrop(sessionId: string, index: number): Promise<WriteOutcome> {
+      return foldWrite(() => remote.stashDrop({ sessionId, index }))
+    },
+    sync(sessionId: string, action: SyncAction): Promise<WriteOutcome> {
+      return foldWrite(() => remote.sync({ sessionId, action }))
+    },
   }
 }
+
+/** What the branch picker shows when the listing could not be read at all. */
+const EMPTY_BRANCHES: BranchList = { current: null, local: [], remote: [] }
 
 async function foldWrite(call: () => Promise<RemoteResult<WriteOutcome>>): Promise<WriteOutcome> {
   try {

@@ -11,13 +11,13 @@
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   BranchList, BranchListArgs, CheckoutArgs, CommitArgs, CommitDetailArgs, CommitOutcome, CreateBranchArgs,
-  DiffArgs, DiffPayload, DiscardArgs, HistoryArgs, HistoryPage, PathsArgs, StashApplyArgs, StashArgs, StashEntry,
-  StashListArgs, StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
+  DiffArgs, DiffPayload, DiscardArgs, HistoryArgs, HistoryPage, PathsArgs, StashApplyArgs, StashArgs, StashDropArgs,
+  StashEntry, StashListArgs, StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_METHODS } from '../remote-descriptor.ts'
 import {
-  checkout, createBranch, hasTrackedChanges, isValidBranchName, isSyncAction, stashApply, stashPush, sync,
-  validStashIndex,
+  checkout, createBranch, hasTrackedChanges, isValidBranchName, isSyncAction, stashApply, stashDrop as stashDropEntry,
+  stashPush, sync, validStashIndex,
 } from './branch.ts'
 import type { HostContext, HostSession } from './context.ts'
 import { readDiff } from './diff.ts'
@@ -233,6 +233,22 @@ export class GitSidebarService extends TypertRemoteService {
     const drop = args.drop === true
     return await this.writeWith(args?.sessionId, async (git) => {
       await stashApply(git, index, drop)
+      return null
+    })
+  }
+
+  /**
+   * Remove one stash entry without applying it.
+   * @param args - the Session and the entry's index.
+   * @returns the new snapshot, or the refusal.
+   */
+  async stashDrop(args?: StashDropArgs): Promise<WriteOutcome> {
+    if (!validStashIndex(args?.index)) {
+      return { ok: false, problem: 'invalid-name', message: 'the stash index is not a possible entry' }
+    }
+    const index = args.index
+    return await this.writeWith(args?.sessionId, async (git) => {
+      await stashDropEntry(git, index)
       return null
     })
   }

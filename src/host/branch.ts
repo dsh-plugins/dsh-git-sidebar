@@ -98,6 +98,16 @@ export async function stashApply(git: GitRunner, index: number, drop: boolean): 
 }
 
 /**
+ * Remove one stash entry without touching the working tree.
+ * @param git - runner bound to the repository root.
+ * @param index - the entry's position, newest being 0.
+ * @returns nothing; the caller re-reads the snapshot.
+ */
+export async function stashDrop(git: GitRunner, index: number): Promise<void> {
+  await git('stash', ['stash', 'drop', `stash@{${index}}`])
+}
+
+/**
  * Report whether a stash index is one the panel can address.
  * @param index - the wire value.
  * @returns whether it names a possible entry.

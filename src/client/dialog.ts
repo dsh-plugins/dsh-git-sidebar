@@ -59,3 +59,84 @@ export function formatDiscardPrompt(t: Translate, prompt: DiscardPrompt): string
 export function confirmDiscard(t: Translate, prompt: DiscardPrompt): boolean {
   return window.confirm(formatDiscardPrompt(t, prompt))
 }
+
+/** One stash entry that is about to be destroyed or applied. */
+export interface StashPrompt {
+  /** Which removal the reader is confirming; `apply` never asks. */
+  readonly action: 'pop' | 'drop'
+  readonly subject: string
+  readonly index: number
+}
+
+/**
+ * Compose the text of a stash confirmation.
+ *
+ * The entry is named by its position and by the message the reader wrote when
+ * storing it, because the two together are what identify one row of the group.
+ * @param t - the panel's translator.
+ * @param prompt - the entry and the action.
+ * @returns the message `window.confirm` shows.
+ */
+export function formatStashPrompt(t: Translate, prompt: StashPrompt): string {
+  const lines = [
+    t(prompt.action === 'pop' ? 'dialog.stash.popTitle' : 'dialog.stash.dropTitle'),
+    '',
+    t(prompt.action === 'pop' ? 'dialog.stash.popBody' : 'dialog.stash.dropBody'),
+    '',
+    `stash@{${prompt.index}}  ${prompt.subject}`,
+  ]
+  return lines.join('\n')
+}
+
+/**
+ * Ask before a stash entry is removed, and report the answer.
+ * @param t - the panel's translator.
+ * @param prompt - the entry and the action.
+ * @returns true when the reader confirmed.
+ */
+export function confirmStash(t: Translate, prompt: StashPrompt): boolean {
+  return window.confirm(formatStashPrompt(t, prompt))
+}
+
+/**
+ * Compose the text of a network-operation confirmation.
+ *
+ * A fetch only reads, so it never asks. A pull moves the local branch and a
+ * push publishes commits other people can see, and both are worth one sentence
+ * naming the upstream they touch.
+ * @param t - the panel's translator.
+ * @param action - which operation is being confirmed.
+ * @param upstream - the tracked ref, when the branch has one.
+ * @returns the message `window.confirm` shows.
+ */
+export function formatSyncPrompt(t: Translate, action: 'pull' | 'push', upstream: string | null): string {
+  const name = upstream ?? t('sync.noUpstream')
+  return [
+    t(action === 'pull' ? 'dialog.pull.title' : 'dialog.push.title'),
+    '',
+    t(action === 'pull' ? 'dialog.pull.body' : 'dialog.push.body', { name }),
+  ].join('\n')
+}
+
+/**
+ * Ask before a network operation that writes to the remote, and report the answer.
+ * @param t - the panel's translator.
+ * @param action - which operation is being confirmed.
+ * @param upstream - the tracked ref, when the branch has one.
+ * @returns true when the reader confirmed.
+ */
+export function confirmSync(t: Translate, action: 'pull' | 'push', upstream: string | null): boolean {
+  return window.confirm(formatSyncPrompt(t, action, upstream))
+}
+
+/**
+ * Report a refusal the reader asked for and Git declined.
+ *
+ * Switching branches over a dirty tree is the case this exists for: the request
+ * looked reasonable, so silence would read as a bug, and the panel's own notice
+ * line is easy to miss beside a header that did not change.
+ * @param message - the sentence to show.
+ */
+export function notify(message: string): void {
+  window.alert(message)
+}

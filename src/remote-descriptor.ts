@@ -62,7 +62,7 @@ export interface RemoteContribution {
 export const REMOTE_METHODS = [
   'status', 'diff', 'stage', 'unstage', 'discard', 'commit',
   'history', 'commitDetail', 'branches', 'checkout', 'createBranch',
-  'stashes', 'stash', 'stashApply', 'sync',
+  'stashes', 'stash', 'stashApply', 'stashDrop', 'sync',
 ] as const
 
 /** One method of the mounted namespace. */
@@ -131,6 +131,7 @@ export function gitSidebarContribution(zod: ZodLike): RemoteContribution {
         index: zod.number(),
         drop: zod.boolean(),
       })),
+      descriptor('stashDrop', () => ({ sessionId: zod.string(), index: zod.number() })),
       descriptor('sync', () => ({ sessionId: zod.string(), action: zod.string() })),
     ],
   }

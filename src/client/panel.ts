@@ -1,6 +1,6 @@
 /**
- * The Git panel body: the branch, the two change groups, conflicts, and the
- * commit box.
+ * The Git panel body: the branch header, the two change groups, conflicts, the
+ * commit box, the stash group, and the commit history.
  *
  * Everything the panel draws comes from one `StatusSnapshot`, which the Host
  * returns after every write as well as from `status`. A write therefore never
@@ -8,23 +8,27 @@
  * one on screen, so a file that a hook, a filter, or a concurrent edit moved
  * between the groups lands where Git says it is.
  *
- * The history slot at the bottom stays empty and addressable
- * (`data-git-history-slot`), so a later version fills it without moving the
- * commit box or changing this component's shape.
+ * The branch list, the stash entries, and the history page are not part of that
+ * snapshot: they are read on demand. A snapshot is read on every refresh and
+ * after every write, and carrying three extra lists through it would make each
+ * of those reads pay for data the panel is not showing.
  */
 
 import type {
-  ChangeEntry, GitIdentity, StatusSnapshot, WriteOutcome,
+  BranchList, ChangeEntry, CommitEntry, GitIdentity, StashEntry, StatusSnapshot, SyncAction, WriteOutcome,
 } from '../shared.ts'
 import { DIFF_TAB_KIND, diffAddress } from '../shared.ts'
 import type {
   GitRemoteHandle, GitSidebarApi, ReactLike, TabBodyProps, TabInfo, Translate,
 } from './api.ts'
 import { messageOf, unavailableSnapshot } from './api.ts'
+import { makeBranchHeader, type BranchHeaderProps } from './branch-header.ts'
 import { CommitBox } from './commit-box.ts'
-import { confirmDiscard } from './dialog.ts'
+import { confirmDiscard, confirmSync, notify } from './dialog.ts'
+import { makeHistory } from './history.ts'
 import { Icon } from './icons.ts'
 import { makeFileRow, type RowAction } from './row.ts'
+import { makeStashGroup, type StashProps } from './stash-group.ts'
 import { PREFIX } from './styles.ts'
 
 /** The panel's runtime facts, fixed for the life of the plugin. */
@@ -44,6 +48,19 @@ const EMPTY_SNAPSHOT: StatusSnapshot = {
   identity: { name: null, email: null },
 }
 
+/** What the branch picker shows when the listing could not be read at all. */
+const EMPTY_BRANCHES: BranchList = { current: null, local: [], remote: [] }
+
+/** What the history shows when the page could not be read at all. */
+const EMPTY_PAGE: { commits: readonly CommitEntry[]; hasMore: boolean } = { commits: [], hasMore: false }
+
+/**
+ * Refusals the reader is told about where they are looking, not only in the
+ * notice line: each of them answers a branch action with a repository fact the
+ * reader cannot see from the panel's own state.
+ */
+const REFUSAL_ALERTS: ReadonlySet<string> = new Set(['dirty', 'exists', 'invalid-name'])
+
 /** One group-level action: what it does, how it is labelled, and which glyph draws it. */
 interface GroupAction {
   readonly id: string
@@ -60,6 +77,14 @@ interface SessionCalls {
   unstage(paths: readonly string[]): Promise<WriteOutcome>
   discard(paths: readonly string[], includeUntracked: boolean): Promise<WriteOutcome>
   commit(message: string): ReturnType<GitSidebarApi['commit']>
+  branches(): Promise<BranchList>
+  checkout(branch: string): Promise<WriteOutcome>
+  createBranch(name: string): Promise<WriteOutcome>
+  stash(): Promise<WriteOutcome>
+  stashApply(index: number, drop: boolean): Promise<WriteOutcome>
+  stashDrop(index: number): Promise<WriteOutcome>
+  sync(action: SyncAction): Promise<WriteOutcome>
+  history(limit: number, skip: number): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean }>
 }
 
 /**
@@ -71,6 +96,9 @@ interface SessionCalls {
 export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabBodyProps) => unknown {
   const t = runtime.t
   const FileRow = makeFileRow(React)
+  const BranchHeader = makeBranchHeader(React)
+  const StashGroup = makeStashGroup(React)
+  const History = makeHistory(React)
 
   /** The panel: one snapshot, one message, and the writes that change them. */
   function GitPanel(props: TabBodyProps): unknown {
@@ -80,6 +108,8 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const [busy, setBusy] = React.useState(false)
     const [message, setMessage] = React.useState('')
     const [notice, setNotice] = React.useState('')
+    const [stashes, setStashes] = React.useState<readonly StashEntry[]>([])
+    const [historyOpen, setHistoryOpen] = React.useState(true)
 
     const load = React.useCallback((): void => {
       if (sessionId === '') {
@@ -100,6 +130,18 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       load()
     }, [load])
 
+    const loadStashes = React.useCallback((): void => {
+      if (sessionId === '') return
+      void runtime.api.ready
+        .then(api => api.stashes(sessionId))
+        .catch(() => [] as readonly StashEntry[])
+        .then(setStashes)
+    }, [sessionId])
+
+    React.useEffect(() => {
+      loadStashes()
+    }, [loadStashes])
+
     const current = (): StatusSnapshot => snapshot ?? EMPTY_SNAPSHOT
     const tab = runtime.tab(props)
 
@@ -109,6 +151,18 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       discard: (paths, includeUntracked) => runtime.api.ready
         .then(api => api.discard(sessionId, paths, includeUntracked)),
       commit: text => runtime.api.ready.then(api => api.commit(sessionId, text)),
+      branches: () => runtime.api.ready
+        .then(api => api.branches(sessionId))
+        .catch(() => EMPTY_BRANCHES),
+      checkout: branch => runtime.api.ready.then(api => api.checkout(sessionId, branch)),
+      createBranch: name => runtime.api.ready.then(api => api.createBranch(sessionId, name)),
+      stash: () => runtime.api.ready.then(api => api.stash(sessionId)),
+      stashApply: (index, drop) => runtime.api.ready.then(api => api.stashApply(sessionId, index, drop)),
+      stashDrop: index => runtime.api.ready.then(api => api.stashDrop(sessionId, index)),
+      sync: action => runtime.api.ready.then(api => api.sync(sessionId, action)),
+      history: (limit, skip) => runtime.api.ready
+        .then(api => api.history(sessionId, limit, skip))
+        .catch(() => EMPTY_PAGE),
     }
 
     const write = (action: () => Promise<WriteOutcome>, failure: string): void => {
@@ -120,15 +174,22 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
           setBusy(false)
           if (outcome.ok) {
             setSnapshot(outcome.snapshot)
+            loadStashes()
             return
           }
-          setNotice(outcome.message === '' ? failure : outcome.message)
+          const text = refusalText(t, outcome.problem, outcome.message, failure)
+          setNotice(text)
+          // A refusal the reader did not expect — a checkout declined for a
+          // dirty tree, a branch name already taken — is stated where they are
+          // looking as well as in the notice line, which a busy panel can hide.
+          if (REFUSAL_ALERTS.has(outcome.problem)) notify(text)
         })
     }
 
     const refresh = (): void => {
       setNotice('')
       load()
+      loadStashes()
     }
 
     const stageAll = (): void => {
@@ -152,6 +213,42 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       if (files.length === 0) return
       if (!confirmDiscard(t, { files, untracked: [] })) return
       write(() => calls.discard(files, false), t('notice.discardFailed'))
+    }
+
+    const stashCurrent = (): void => {
+      write(() => calls.stash(), t('notice.stashFailed'))
+    }
+    const stashApply = (index: number): void => {
+      write(() => calls.stashApply(index, false), t('notice.stashApplyFailed'))
+    }
+    const stashPop = (index: number): void => {
+      write(() => calls.stashApply(index, true), t('notice.stashPopFailed'))
+    }
+    const stashDrop = (index: number): void => {
+      write(() => calls.stashDrop(index), t('notice.stashDropFailed'))
+    }
+
+    const checkout = (branch: string): void => {
+      write(() => calls.checkout(branch), t('notice.checkoutFailed'))
+    }
+    const createBranch = (name: string): void => {
+      write(() => calls.createBranch(name), t('notice.createBranchFailed'))
+    }
+    const sync = (action: SyncAction): void => {
+      if (action !== 'fetch' && !confirmSync(t, action, current().upstream?.name ?? null)) return
+      setNotice('')
+      setBusy(true)
+      void calls.sync(action)
+        .catch((error: unknown) => ({ ok: false as const, problem: 'failed' as const, message: messageOf(error) }))
+        .then((outcome) => {
+          setBusy(false)
+          if (outcome.ok) {
+            setSnapshot(outcome.snapshot)
+            setNotice(t('notice.syncDone', { action: t(`sync.${action}`) }))
+            return
+          }
+          setNotice(refusalText(t, outcome.problem, outcome.message, t('notice.syncFailed')))
+        })
     }
 
     const commit = (): void => {
@@ -203,16 +300,51 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       }, diffAction]
     }
 
+    const headerProps = (): BranchHeaderProps => ({
+      snapshot,
+      loading,
+      busy,
+      t,
+      refresh,
+      listBranches: calls.branches,
+      checkout,
+      createBranch,
+      sync,
+      stash: stashCurrent,
+    })
+
+    const stashProps = (): StashProps => ({
+      entries: stashes,
+      canStash: current().kind === 'repository'
+        && current().staged.length + current().unstaged.length + current().conflicts.length > 0,
+      busy,
+      t,
+      stash: stashCurrent,
+      apply: stashApply,
+      pop: stashPop,
+      drop: stashDrop,
+    })
+
+    const historyElement = (): unknown => React.createElement(History, {
+      open: historyOpen,
+      t,
+      load: calls.history,
+      tab,
+      // A commit changes the newest entry, so the list is read again after one.
+      revision: snapshot?.commit ?? '',
+      onToggle: () => { setHistoryOpen(!historyOpen) },
+    })
+
     if (snapshot === undefined) {
       return React.createElement('section', {
         className: `${PREFIX}-root`,
         'data-git-panel': '',
         ...busy ? { 'data-git-busy': '' } : {},
       },
-        branchHeader(React, t, undefined, loading, refresh),
-        sessionId === ''
-          ? stateBlock(React, t('state.noSession.title'), t('state.noSession.body'))
-          : skeleton(React),
+      React.createElement(BranchHeader, headerProps()),
+      sessionId === ''
+        ? stateBlock(React, t('state.noSession.title'), t('state.noSession.body'))
+        : skeleton(React),
       )
     }
 
@@ -223,28 +355,27 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         'data-git-panel': '',
         'data-problem': problem,
       },
-      branchHeader(React, t, snapshot, loading, refresh),
+      React.createElement(BranchHeader, headerProps()),
       stateBlock(React, t(`state.${problem}.title`), t(`state.${problem}.body`), snapshot.message),
+      historyElement(),
       )
     }
 
     const total = snapshot.staged.length + snapshot.unstaged.length + snapshot.conflicts.length
     // With nothing to show, the groups and the commit box would offer empty
-    // controls next to a sentence saying exactly that.
+    // controls next to a sentence saying exactly that. The stash group and the
+    // history stay, because both describe the repository rather than the tree.
     if (total === 0) {
       return React.createElement('section', {
         className: `${PREFIX}-root`,
         'data-git-panel': '',
         ...busy ? { 'data-git-busy': '' } : {},
       },
-      branchHeader(React, t, snapshot, loading, refresh),
+      React.createElement(BranchHeader, headerProps()),
       notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
       stateBlock(React, t('state.clean.title'), t('state.clean.body')),
-      React.createElement('div', {
-        className: `${PREFIX}-history-slot`,
-        'data-git-history-slot': '',
-        style: { flex: 1, minHeight: 0, overflow: 'auto' },
-      }),
+      React.createElement(StashGroup, stashProps()),
+      historyElement(),
       )
     }
 
@@ -253,7 +384,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       'data-git-panel': '',
       ...busy ? { 'data-git-busy': '' } : {},
     },
-      branchHeader(React, t, snapshot, loading, refresh),
+      React.createElement(BranchHeader, headerProps()),
       React.createElement('div', { className: `${PREFIX}-body` },
         notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
         changeGroup(React, {
@@ -319,6 +450,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
           })),
           actions: [],
         }),
+        React.createElement(StashGroup, stashProps()),
       ),
       CommitBox(React, {
         message,
@@ -329,13 +461,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         onChange: setMessage,
         onSubmit: commit,
       }),
-      // The lower half stays empty in this version: the history view that will
-      // fill it owns no state here, and the slot keeps its place in the layout.
-      React.createElement('div', {
-        className: `${PREFIX}-history-slot`,
-        'data-git-history-slot': '',
-        style: { flex: 1, minHeight: 0, overflow: 'auto' },
-      }),
+      historyElement(),
     )
   }
   return GitPanel
@@ -356,13 +482,6 @@ function openFileDiff(tab: TabInfo['tab'] | undefined, path: string, staged: boo
   tab.actions.openResource(diffAddress(path, staged), { kind: DIFF_TAB_KIND })
 }
 
-/** The last segment of a filesystem path, for the narrow repository label. */
-function lastSegment(path: string): string {
-  const trimmed = path.replace(/[\\/]+$/, '')
-  const cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-  return cut < 0 ? trimmed : trimmed.slice(cut + 1)
-}
-
 /**
  * Whether the repository has no author to commit with. A Host that could not
  * read the identity answers with both fields null, which a commit reports
@@ -374,50 +493,24 @@ export function isIdentityMissing(identity: GitIdentity): boolean {
   return identity.name === null || identity.email === null
 }
 
-/** The branch header: the checked-out name, the short commit when HEAD is detached, and refresh. */
-function branchHeader(
-  React: ReactLike,
-  t: Translate,
-  snapshot: StatusSnapshot | undefined,
-  loading: boolean,
-  refresh: () => void,
-): unknown {
-  const detached = snapshot?.branch === null
-  // An unavailable snapshot describes no checkout, so its header names no
-  // branch rather than claiming an unknown one.
-  const label = snapshot === undefined || snapshot.kind === 'unavailable'
-    ? ''
-    : snapshot.branch ?? snapshot.commit ?? t('branch.unknown')
-  const root = snapshot?.root
-  return React.createElement('div', { className: `${PREFIX}-header` },
-    snapshot === undefined
-      ? React.createElement('span', { className: `${PREFIX}-branch`, 'aria-busy': 'true' }, loading ? '…' : '')
-      : React.createElement('span', {
-        className: `${PREFIX}-branch`,
-        'data-git-branch': '',
-        'data-detached': detached ? '' : undefined,
-        title: root === undefined || label === '' ? undefined : `${label}\n${root}`,
-      }, label),
-    root === undefined
-      ? null
-      : React.createElement('span', {
-        className: `${PREFIX}-sub`,
-        title: root,
-        // The column is narrow, so the reading shows the last segment while the
-        // tooltip keeps the whole path.
-        'data-full': root,
-      }, lastSegment(root)),
-    React.createElement('button', {
-      type: 'button',
-      className: `${PREFIX}-tool`,
-      'aria-label': t('refresh'),
-      title: t('refresh'),
-      'data-git-refresh': '',
-      'data-turning': loading ? '' : undefined,
-      disabled: loading,
-      onClick: refresh,
-    }, Icon(React, 'refresh')),
-  )
+/**
+ * The sentence a refused write shows.
+ *
+ * Three refusals say something about the repository that Git's own wording
+ * states too technically: a dirty tree is the reason a checkout was declined,
+ * an existing name is the reason a branch was not created, and an invalid name
+ * is the reason Git rejected the spelling.
+ * @param t - the panel's translator.
+ * @param problem - the refusal code the Host returned.
+ * @param message - the Host's own detail.
+ * @param fallback - the panel's sentence for an unclassified failure.
+ * @returns the text to show.
+ */
+function refusalText(t: Translate, problem: string, message: string, fallback: string): string {
+  if (problem === 'dirty') return t('notice.dirty')
+  if (problem === 'exists') return t('notice.exists')
+  if (problem === 'invalid-name') return t('notice.invalidName')
+  return message === '' ? fallback : message
 }
 
 /** One group: its title, its count, its group-level actions, and its rows. */

@@ -18,7 +18,7 @@
  * each stylesheet is injected as a `<style>` element the plugin's effect owns.
  */
 
-import type { DiffArgs, DiffPayload } from './shared.ts'
+import type { CommitDetailArgs, DiffArgs, DiffPayload } from './shared.ts'
 import { DIFF_TAB_ID, PANEL_TAB_ID, PANEL_TAB_KIND } from './shared.ts'
 import {
   mountGitRemote, resolveZod, type GitClientContext, type GitRemoteHandle, type ReactLike, type TabBodyProps,
@@ -50,7 +50,45 @@ const DICTS: Record<string, Record<string, string>> = {
     'guide.title': 'Git 面板',
     'guide.description': '查看分支、工作区状态与提交',
     'refresh': '刷新',
+    'more.actions': '更多操作',
     'branch.unknown': '未知分支',
+    'branch.selector': '切换分支',
+    'branch.loading': '正在读取分支…',
+    'branch.empty': '没有本地分支',
+    'branch.newPlaceholder': '新建分支',
+    'branch.create': '创建',
+    'upstream.title': '上游 {name}',
+    'operation.merge': '正在进行合并（merge）',
+    'operation.rebase': '正在进行变基（rebase）',
+    'operation.cherry-pick': '正在挑选提交（cherry-pick）',
+    'operation.revert': '正在反向提交（revert）',
+    'operation.abort': '中止',
+    'operation.abortLater': '中止操作将在下一版本提供',
+    'sync.fetch': '获取（fetch）',
+    'sync.pull': '拉取（pull）',
+    'sync.push': '推送（push）',
+    'sync.noUpstream': '当前分支没有上游',
+    'history.title': '历史',
+    'history.empty': '还没有提交',
+    'history.loading': '正在加载…',
+    'history.more': '加载更多',
+    'history.end': '已到最早一条',
+    'history.failed': '无法读取提交历史',
+    'history.expand': '展开历史',
+    'history.collapse': '收起历史',
+    'history.justNow': '刚刚',
+    'history.minutesAgo': '{count} 分钟前',
+    'history.hoursAgo': '{count} 小时前',
+    'history.daysAgo': '{count} 天前',
+    'history.monthsAgo': '{count} 个月前',
+    'history.yearsAgo': '{count} 年前',
+    'stash.group': '储藏',
+    'stash.empty': '没有储藏',
+    'stash.current': '储藏当前改动',
+    'stash.currentDisabled': '工作区干净，没有可储藏的改动',
+    'stash.apply': '应用',
+    'stash.pop': '弹出',
+    'stash.drop': '删除',
     'group.staged': '暂存更改',
     'group.changes': '更改',
     'group.conflicts': '冲突',
@@ -73,6 +111,17 @@ const DICTS: Record<string, Record<string, string>> = {
     'notice.stageFailed': '暂存失败',
     'notice.unstageFailed': '取消暂存失败',
     'notice.discardFailed': '放弃更改失败',
+    'notice.checkoutFailed': '切换分支失败',
+    'notice.createBranchFailed': '创建分支失败',
+    'notice.stashFailed': '储藏失败',
+    'notice.stashApplyFailed': '应用储藏失败',
+    'notice.stashPopFailed': '弹出储藏失败',
+    'notice.stashDropFailed': '删除储藏失败',
+    'notice.syncFailed': '同步失败',
+    'notice.syncDone': '{action} 完成',
+    'notice.dirty': '有未提交的改动，无法切换分支',
+    'notice.exists': '同名分支已存在',
+    'notice.invalidName': '这个名称不是有效的分支名',
     'state.noSession.title': '没有可用的会话',
     'state.noSession.body': '打开一个会话后，这里会显示该会话工作目录的 Git 状态。',
     'state.clean.title': '没有未提交的更改',
@@ -89,13 +138,59 @@ const DICTS: Record<string, Record<string, string>> = {
     'dialog.discard.body': '未暂存的内容将被还原到最近一次提交，此操作无法撤销。',
     'dialog.discard.untracked': '其中包含未跟踪的文件：它们会被直接删除，无法恢复。',
     'dialog.filesMany': '{first} 等 {count} 个文件',
+    'dialog.stash.popTitle': '弹出这条储藏？',
+    'dialog.stash.popBody': '改动会回到工作区，储藏记录将被删除。',
+    'dialog.stash.dropTitle': '删除这条储藏？',
+    'dialog.stash.dropBody': '储藏记录将被删除，其中的改动不会再回到工作区。',
+    'dialog.pull.title': '拉取远端？',
+    'dialog.pull.body': '会把 {name} 合入当前分支，可能产生冲突或改写工作区。',
+    'dialog.push.title': '推送到远端？',
+    'dialog.push.body': '会把当前分支的提交推送到 {name}，其他人会看到这些提交。',
   },
   en: {
     'panel.label': 'Git',
     'guide.title': 'Git panel',
     'guide.description': 'Inspect branches, working-tree status and commits',
     'refresh': 'Refresh',
+    'more.actions': 'More actions',
     'branch.unknown': 'Unknown branch',
+    'branch.selector': 'Switch branch',
+    'branch.loading': 'Reading branches…',
+    'branch.empty': 'No local branches',
+    'branch.newPlaceholder': 'New branch',
+    'branch.create': 'Create',
+    'upstream.title': 'Tracking {name}',
+    'operation.merge': 'A merge is in progress',
+    'operation.rebase': 'A rebase is in progress',
+    'operation.cherry-pick': 'A cherry-pick is in progress',
+    'operation.revert': 'A revert is in progress',
+    'operation.abort': 'Abort',
+    'operation.abortLater': 'Aborting arrives in the next version',
+    'sync.fetch': 'Fetch',
+    'sync.pull': 'Pull',
+    'sync.push': 'Push',
+    'sync.noUpstream': 'the current branch has no upstream',
+    'history.title': 'History',
+    'history.empty': 'No commits yet',
+    'history.loading': 'Loading…',
+    'history.more': 'Load more',
+    'history.end': 'That is the first commit',
+    'history.failed': 'Could not read the commit history',
+    'history.expand': 'Expand the history',
+    'history.collapse': 'Collapse the history',
+    'history.justNow': 'just now',
+    'history.minutesAgo': '{count}m ago',
+    'history.hoursAgo': '{count}h ago',
+    'history.daysAgo': '{count}d ago',
+    'history.monthsAgo': '{count}mo ago',
+    'history.yearsAgo': '{count}y ago',
+    'stash.group': 'Stashes',
+    'stash.empty': 'No stashes',
+    'stash.current': 'Stash current changes',
+    'stash.currentDisabled': 'The working tree is clean, so there is nothing to stash',
+    'stash.apply': 'Apply',
+    'stash.pop': 'Pop',
+    'stash.drop': 'Drop',
     'group.staged': 'Staged changes',
     'group.changes': 'Changes',
     'group.conflicts': 'Conflicts',
@@ -118,6 +213,17 @@ const DICTS: Record<string, Record<string, string>> = {
     'notice.stageFailed': 'Could not stage',
     'notice.unstageFailed': 'Could not unstage',
     'notice.discardFailed': 'Could not discard',
+    'notice.checkoutFailed': 'Could not switch branches',
+    'notice.createBranchFailed': 'Could not create the branch',
+    'notice.stashFailed': 'Could not stash',
+    'notice.stashApplyFailed': 'Could not apply the stash',
+    'notice.stashPopFailed': 'Could not pop the stash',
+    'notice.stashDropFailed': 'Could not drop the stash',
+    'notice.syncFailed': 'Sync failed',
+    'notice.syncDone': '{action} finished',
+    'notice.dirty': 'The working tree has uncommitted changes, so the branch was not switched',
+    'notice.exists': 'A branch with that name already exists',
+    'notice.invalidName': 'That is not a valid branch name',
     'state.noSession.title': 'No Session to read',
     'state.noSession.body': 'Open a Session and this panel shows the Git state of its working directory.',
     'state.clean.title': 'No uncommitted changes',
@@ -134,6 +240,14 @@ const DICTS: Record<string, Record<string, string>> = {
     'dialog.discard.body': 'Unstaged content returns to the last commit. This cannot be undone.',
     'dialog.discard.untracked': 'Untracked files are among them: they are deleted outright and cannot be restored.',
     'dialog.filesMany': '{first} and {count} files in all',
+    'dialog.stash.popTitle': 'Pop this stash entry?',
+    'dialog.stash.popBody': 'The changes return to the working tree and the entry is removed.',
+    'dialog.stash.dropTitle': 'Drop this stash entry?',
+    'dialog.stash.dropBody': 'The entry is removed and its changes never return to the working tree.',
+    'dialog.pull.title': 'Pull from the upstream?',
+    'dialog.pull.body': 'Brings {name} into the current branch, which can conflict or rewrite the working tree.',
+    'dialog.push.title': 'Push to the upstream?',
+    'dialog.push.body': 'Publishes this branch’s commits to {name}, where other people will see them.',
   },
 }
 
@@ -165,6 +279,15 @@ function installStyles(ctx: GitClientContext, sheet: string, name: string): void
  */
 function diffReader(remote: GitRemoteHandle): (args: DiffArgs) => Promise<DiffPayload> {
   return args => remote.ready.then(api => api.requestDiff(args))
+}
+
+/**
+ * Read one commit's own patch, for the diff tab a history row opens.
+ * @param remote - the mounted namespace, wrapped for the panel.
+ * @returns the reader the diff body is given for a `commit/` address.
+ */
+function commitReader(remote: GitRemoteHandle): (args: CommitDetailArgs) => Promise<DiffPayload> {
+  return args => remote.ready.then(api => api.requestCommit(args))
 }
 
 loader.load({
@@ -223,10 +346,11 @@ loader.load({
         }, Panel)), 'git-sidebar: panel body')
 
         // The diff viewer: the same two-stage path under its own id. Its body
-        // is built with the loader's React and reads a file through the same
-        // Remote namespace.
+        // is built with the loader's React and reads a file, or a commit's own
+        // patch, through the same Remote namespace.
         const DiffBody = makeDiffBody(React, {
           requestDiff: diffReader(remote),
+          requestCommit: commitReader(remote),
           t: ctx.locale.bind(DIFF_LOCALE_NS),
           stylesInstalled: true,
         })

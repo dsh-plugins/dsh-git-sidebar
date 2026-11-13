@@ -228,6 +228,12 @@ export interface StashApplyArgs {
   readonly drop: boolean
 }
 
+/** Arguments of a stash drop: remove the entry without applying it. */
+export interface StashDropArgs {
+  readonly sessionId: string
+  readonly index: number
+}
+
 /** The network operation a sync request names. */
 export type SyncAction = 'fetch' | 'pull' | 'push'
 
@@ -272,6 +278,32 @@ export const DIFF_ADDRESS_PREFIX = 'dsh-resource://git-diff/'
  */
 export function diffAddress(path: string, staged: boolean): string {
   return `${DIFF_ADDRESS_PREFIX}${staged ? 'staged' : 'worktree'}/${encodeURIComponent(path)}`
+}
+
+/**
+ * Compose the address of one commit's diff tab.
+ * @param sha - the commit's object name.
+ * @returns the address the tab system uses as content identity.
+ */
+export function commitDiffAddress(sha: string): string {
+  return `${DIFF_ADDRESS_PREFIX}commit/${encodeURIComponent(sha)}`
+}
+
+/**
+ * Read back the commit of a diff address.
+ * @param address - an address produced by {@link commitDiffAddress}.
+ * @returns the commit name, or undefined when the address names a file instead.
+ */
+export function parseCommitDiffAddress(address: string): string | undefined {
+  const prefix = `${DIFF_ADDRESS_PREFIX}commit/`
+  if (!address.startsWith(prefix)) return undefined
+  const raw = address.slice(prefix.length)
+  if (raw.length === 0) return undefined
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return undefined
+  }
 }
 
 /**

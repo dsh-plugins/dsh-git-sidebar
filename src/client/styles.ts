@@ -489,9 +489,505 @@ export const PANEL_STYLES = `
   border-radius: var(--dsw-radius-xs);
 }
 
-.gs-history-slot {
+/* Branch header: the wrap holds the row and the operation bar under it. */
+.gs-header-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.gs-branch-btn {
+  display: inline-flex;
+  flex: 0 1 auto;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 4px 2px 6px;
+  margin-left: -6px;
+  color: var(--dsw-alias-brand-primary);
+  font: inherit;
+  font-weight: 600;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+
+.gs-branch-btn[data-detached] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.gs-branch-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-branch-btn:focus-visible,
+.gs-branch-option:focus-visible,
+.gs-menu-item:focus-visible,
+.gs-history-title:focus-visible,
+.gs-history-more:focus-visible,
+.gs-commit-open:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
+.gs-upstream {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gs-ahead {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.gs-behind {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.gs-operation {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 12px;
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 12px;
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
+}
+
+.gs-operation-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.gs-operation-abort {
+  flex: none;
+  padding: 2px 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 11px;
+  background: transparent;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+
+.gs-operation-abort:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  border-color: var(--dsw-alias-border-l3);
+  cursor: default;
+}
+
+/* Dropdowns: a full-window backdrop closes them, so no node needs a ref. */
+
+.gs-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.gs-menu {
+  position: absolute;
+  top: calc(100% - 4px);
+  right: 6px;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 180px;
+  max-width: min(300px, calc(100vw - 24px));
+  max-height: 60vh;
+  padding: 4px;
+  overflow: auto;
+  color: var(--dsw-alias-label-primary);
+  /* The shell's own menu surface: translucent over the panel in both palettes,
+     where bg-layer-2 equals the panel fill in the light theme. */
+  background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2));
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  box-shadow: var(--dsw-elevation-panel, 0 3px 8px rgb(0 0 0 / 12%));
+  backdrop-filter: var(--dsw-menu-backdrop-filter, none);
+}
+
+.gs-branch-menu {
+  right: 6px;
+  left: 6px;
+  max-width: none;
+}
+
+.gs-menu-title {
+  margin: 2px 6px 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.gs-menu-note {
+  margin: 2px 6px 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.gs-menu-sep {
+  height: 0.5px;
+  margin: 4px 2px;
+  background: var(--dsw-alias-border-l3);
+}
+
+.gs-branch-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.gs-branch-option {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 8px 3px 4px;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+
+.gs-branch-option[data-current] {
+  color: var(--dsw-alias-brand-primary);
+  font-weight: 600;
+}
+
+.gs-branch-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-branch-space {
+  flex: none;
+  width: 16px;
+}
+
+.gs-new-branch {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 2px 2px;
+  border-top: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.gs-new-branch-input {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 2px 6px;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-xs);
+  outline: none;
+}
+
+.gs-new-branch-input:focus {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.gs-new-branch-input::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+}
+
+.gs-new-branch-create {
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  color: var(--dsw-alias-label-primary-foreground);
+  font: inherit;
+  font-size: 12px;
+  background: var(--dsw-alias-button-primary-fill);
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+
+.gs-new-branch-create:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  cursor: default;
+}
+
+.gs-more-menu {
+  min-width: 190px;
+}
+
+.gs-menu-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+
+.gs-menu-item svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.gs-menu-item:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+/* History */
+
+.gs-history {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.gs-history-head {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+  min-height: 30px;
+  padding: 2px 8px 2px 4px;
+}
+
+.gs-history-title {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+  padding: 2px 4px;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+
+.gs-history-title svg {
+  width: 16px;
+  height: 16px;
+}
+
+.gs-history-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.gs-commits {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 6px 4px;
+  list-style: none;
+}
+
+.gs-commit {
+  display: flex;
+  border-radius: var(--dsw-radius-sm);
+}
+
+.gs-commit-open {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 2px 6px;
+  align-items: baseline;
+  min-width: 0;
+  padding: 4px 6px;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+}
+
+.gs-sha {
+  grid-column: 1;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsh-font-family-code, ui-monospace, monospace);
+  font-size: 11px;
+}
+
+.gs-subject {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-refs {
+  display: flex;
+  grid-column: 3;
+  grid-row: 1;
+  flex-wrap: wrap;
+  gap: 3px;
+  justify-content: flex-end;
+}
+
+.gs-ref {
+  max-width: 120px;
+  overflow: hidden;
+  padding: 0 5px;
+  color: var(--dsw-alias-brand-primary);
+  font-size: 10px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
+  border-radius: var(--dsw-radius-xs);
+}
+
+.gs-ref[data-ref='tag'] {
+  color: var(--dsw-alias-label-secondary);
+  background: color-mix(in srgb, var(--dsw-alias-label-secondary) 14%, transparent);
+}
+
+.gs-commit-meta {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.gs-author {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-when {
+  flex: none;
+  margin-left: auto;
+}
+
+.gs-history-note,
+.gs-history-end {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.gs-history-more {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 2px 8px 8px;
+  padding: 5px 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  background: transparent;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+}
+
+.gs-history-more:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+/* Stashes */
+
+.gs-stash-group {
+  margin-bottom: 4px;
+}
+
+.gs-group-note {
+  margin: 0;
+  padding: 2px 8px 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.gs-stash-open {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+  padding: 3px 4px 3px 6px;
+}
+
+.gs-stash-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.gs-stash-row .gs-actions {
+  opacity: 1;
+}
+
+@media (hover: hover) {
+  .gs-branch-btn:hover:not(:disabled),
+  .gs-history-title:hover,
+  .gs-menu-item:hover:not(:disabled),
+  .gs-branch-option:hover:not(:disabled),
+  .gs-history-more:hover:not(:disabled) {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+
+  .gs-commit:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+
+  .gs-branch-option[data-current]:hover:not(:disabled) {
+    background: transparent;
+  }
+}
+
+@media (pointer: coarse) {
+  .gs-menu-item,
+  .gs-branch-option {
+    min-height: 40px;
+  }
 }
 `

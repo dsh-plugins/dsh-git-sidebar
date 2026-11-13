@@ -1,29 +1,34 @@
 /**
- * The diff viewer tab: one file's changes, drawn from the payload the Host
- * already parsed.
+ * The diff viewer tab: one file's changes or one commit's patch, drawn from the
+ * payload the Host already parsed.
  *
  * Registration follows the ordinary two-stage path a tab type uses: the
  * definition goes into `sidebarRightTabs`, the body into the keyed
- * `sidebar.right.pane.tab` seat under the same id. A page type names no resource
- * patterns and carries no guide entry, so it never appears on the Start page.
+ * `sidebar.right.pane.tab` seat under the same id. A page type names no guide
+ * entry, so it never appears on the Start page; it claims this package's
+ * resource scheme instead, which is what gives each file and each commit its own
+ * tab.
  *
  * React and the Remote are not this module's to own. The client entry supplies
- * React from the module table, and the diff reader and copy either as factory
+ * React from the module table, and the readers and copy either as factory
  * arguments or, following the slot framework's injected-props seat, as
- * `props.requestDiff` and `props.t`. Both are accepted because neither is
- * invented here: one is how the shell hands React over, the other is how the
- * Sidebar's `inject` callback hands a body its services.
+ * `props.requestDiff`, `props.requestCommit`, and `props.t`. Both are accepted
+ * because neither is invented here: one is how the shell hands React over, the
+ * other is how the Sidebar's `inject` callback hands a body its services.
  *
- * A diff tab can name its file two ways, and both are read. An address composed
- * by `diffAddress` carries the file and the staging side in the address itself.
- * A page opened by kind is recorded at `sidebar://<kind>` instead, so the file
- * arrives in the navigation parameters; that shape is what an `openTab` open
- * produces, and it is why {@link makeDiffTitle} exists — the chip title captured
- * at open time cannot know the file of a later navigation.
+ * A diff tab can name its target three ways, and all are read. A `commit/`
+ * address carries a commit, a `staged/` or `worktree/` address carries a file
+ * and its side of the index, and a page opened by kind is recorded at
+ * `sidebar://<kind>` instead, so the target arrives in the navigation
+ * parameters. That last shape is what an `openTab` open produces, and it is why
+ * {@link makeDiffTitle} exists — the chip title captured at open time cannot
+ * know the target of a later navigation.
  */
 
-import type { DiffArgs, DiffHunk, DiffPayload } from '../shared.ts'
-import { DIFF_ADDRESS_PREFIX, DIFF_TAB_ID, DIFF_TAB_KIND, parseDiffAddress } from '../shared.ts'
+import type { CommitDetailArgs, DiffArgs, DiffHunk, DiffPayload } from '../shared.ts'
+import {
+  DIFF_ADDRESS_PREFIX, DIFF_TAB_ID, DIFF_TAB_KIND, parseCommitDiffAddress, parseDiffAddress,
+} from '../shared.ts'
 import { basenameOf, toRows, type DiffRow } from './diff-parse.ts'
 
 /**
@@ -48,7 +53,7 @@ export interface DiffTabDefinition {
   readonly multiple: boolean
   /**
    * Resource globs this type claims. Naming the package's own address scheme
-   * lets a diff open as a resource tab, which keeps one tab per file.
+   * lets a diff open as a resource tab, which keeps one tab per file or commit.
    */
   readonly patterns?: readonly string[]
   /**
@@ -58,12 +63,12 @@ export interface DiffTabDefinition {
    * carries, while the Sidebar's own registry type takes a plain string; an
    * optional parameter is assignable to both.
    * @param address - the address the tab is recorded at.
-   * @returns the file's basename, or the generic label when no file is named.
+   * @returns a file's basename, a commit's short name, or the generic label.
    */
   readonly title: (address?: string) => string
 }
 
-/** What the body needs from the client entry: the Remote call, copy, and whether styles are already in. */
+/** What the body needs from the client entry: the Remote readers, copy, and whether styles are already in. */
 export interface DiffRuntime {
   /**
    * Read one file's diff.
@@ -71,21 +76,30 @@ export interface DiffRuntime {
    * @param signal - aborts the request when the tab navigates away.
    * @returns the Host's payload, or a rejection this body reports as a failure.
    */
-  requestDiff(args: DiffArgs, signal?: AbortSignal): Promise<DiffPayload>
+  requestDiff?: (args: DiffArgs, signal?: AbortSignal) => Promise<DiffPayload>
+  /**
+   * Read one commit's own patch.
+   * @param args - the commit and the Session whose checkout holds it.
+   * @param signal - aborts the request when the tab navigates away.
+   * @returns the Host's payload, in the same shape a file diff arrives in.
+   */
+  requestCommit?: (args: CommitDetailArgs, signal?: AbortSignal) => Promise<DiffPayload>
   /** Translate one copy key of {@link DIFF_DICTS}. */
   t?: (key: string) => string
   /** True once the entry injected {@link DIFF_STYLES} through `ctx.effect`, so the body need not. */
   stylesInstalled?: boolean
 }
 
-/** The props read from the slot framework: standard tab identity plus any injected diff reader. */
+/** The props read from the slot framework: standard tab identity plus any injected readers. */
 export interface DiffBodyProps {
   /** Framework-bound tab information: live address, parameters, and lifetime signal. */
   useTabInfo?: () => DiffTabInfo
-  /** Session the tab belongs to, which the Remote call names. */
+  /** Session the tab belongs to, which the Remote calls name. */
   sessionId?: string
-  /** Reader injected through the seat's `inject` callback, if the entry chose that path. */
+  /** File reader injected through the seat's `inject` callback, if the entry chose that path. */
   requestDiff?: DiffRuntime['requestDiff']
+  /** Commit reader injected through the seat's `inject` callback, if the entry chose that path. */
+  requestCommit?: DiffRuntime['requestCommit']
   /** Copy injected through the seat's `inject` callback, if the entry registered a locale. */
   t?: (key: string) => string
 }
@@ -110,7 +124,7 @@ export const DIFF_LOCALE_NS = 'git-sidebar-diff'
 /** Copy dictionary of the diff surfaces: locale id to a flat key/text map. */
 export type DiffDictionaries = Record<string, Record<string, string>>
 
-/** The chip text used where no address names a file. */
+/** The chip text used where no address names a file or commit. */
 const DEFAULT_TITLE = 'Diff'
 
 /** Copy of the diff surfaces, in the two shipped languages. */
@@ -119,31 +133,39 @@ export const DIFF_DICTS: DiffDictionaries = {
     'title': '差异',
     'staged': '已暂存',
     'worktree': '工作区',
+    'commit': '提交',
     'empty': '没有差异',
     'binary': '二进制文件',
     'truncated': '差异过大，已截断',
-    'failed': '无法读取这个文件的差异',
-    'unknownTarget': '这个差异标签页没有对应到文件',
+    'failed': '无法读取这个差异',
+    'commitFailed': '无法读取这个提交的差异',
+    'commitUnavailable': '这个提交的差异暂不可用',
+    'unknownTarget': '这个差异标签页没有对应到文件或提交',
     'unavailable': '差异服务不可用',
   },
   en: {
     'title': 'Diff',
     'staged': 'Staged',
     'worktree': 'Working tree',
+    'commit': 'Commit',
     'empty': 'No changes',
     'binary': 'Binary file',
     'truncated': 'The diff is too large and was truncated',
-    'failed': 'Could not read this file’s diff',
-    'unknownTarget': 'This diff tab names no file',
+    'failed': 'Could not read this diff',
+    'commitFailed': 'Could not read this commit’s diff',
+    'commitUnavailable': 'This commit’s diff is unavailable',
+    'unknownTarget': 'This diff tab names no file or commit',
     'unavailable': 'The diff service is unavailable',
   },
 }
 
-/** The file one diff tab shows. */
-interface DiffTarget {
-  readonly path: string
-  readonly staged: boolean
-}
+/** What one diff tab shows: a file on one side of the index, or a commit's own patch. */
+type DiffTarget =
+  | { readonly kind: 'file'; readonly path: string; readonly staged: boolean }
+  | { readonly kind: 'commit'; readonly sha: string }
+
+/** Characters of a commit name a chip shows. */
+const SHORT_SHA = 7
 
 /** What the body is showing: a request in flight, a payload, or a rejection. */
 type ViewState =
@@ -157,21 +179,22 @@ const PREFIX = 'dsh-gsd'
 /**
  * The diff tab's registry definition.
  *
- * A page type is opened by kind, so it declares no resource patterns, and the
- * Start page offers no entry for it. Each open is its own content: the viewer
- * reads a file, and two files must not share one tab. The chip text is the
- * file's basename when the address names one, and the generic label otherwise.
+ * A page type opened by kind declares no resource patterns, but this one claims
+ * the package's own scheme: a diff then opens as a resource tab, which is what
+ * gives it a per-file identity and a chip naming the file or commit. The Start
+ * page offers no entry for it. Each open is its own content, so two files (or two
+ * commits) never share one tab.
  */
 export const DIFF_TAB_DEFINITION: DiffTabDefinition = {
   id: DIFF_TAB_ID,
   kind: DIFF_TAB_KIND,
   multiple: true,
   // Claim this package's resource scheme so a diff opens as a resource tab:
-  // that is what gives it a per-file identity and a chip naming the file.
+  // that is what gives it a per-file identity and a chip naming the target.
   patterns: [`${DIFF_ADDRESS_PREFIX}**`],
   title: (address?: string): string => {
-    const parsed = address === undefined ? undefined : parseDiffAddress(address)
-    return parsed === undefined ? DEFAULT_TITLE : basenameOf(parsed.path)
+    const target = address === undefined ? undefined : addressTarget(address)
+    return target === undefined ? DEFAULT_TITLE : labelOf(target)
   },
 }
 
@@ -189,23 +212,41 @@ export function makeDiffBody(React: unknown, runtime?: DiffRuntime): (props: unk
     const info = props.useTabInfo === undefined ? undefined : props.useTabInfo()
     const address = info?.tab.navigation.address ?? ''
     const target = targetOf(address, info?.tab.navigation.params)
-    const path = target?.path ?? ''
-    const staged = target?.staged === true
     const revision = info?.tab.navigation.revision ?? 0
     const sessionId = props.sessionId
     const requestDiff = props.requestDiff ?? runtime?.requestDiff
+    const requestCommit = props.requestCommit ?? runtime?.requestCommit
     const t = translator(props.t ?? runtime?.t)
     const [state, setState] = R.useState<ViewState>({ status: 'loading' })
+    // A target that changes identity while the pane stays mounted is a new
+    // request; the string is what the effect below compares, so a fresh object
+    // of the same target does not read again.
+    const key = target === undefined ? '' : targetKey(target)
+    // A commit is read by its own endpoint and a file by the file endpoint, so a
+    // missing reader is a wiring fact about one target, not about the pane.
+    const missingReader = target !== undefined
+      && (target.kind === 'commit' ? requestCommit === undefined : requestDiff === undefined)
 
     R.useEffect((): (() => void) | void => {
-      if (requestDiff === undefined || target === undefined || sessionId === undefined) return
+      if (sessionId === undefined || target === undefined || missingReader) return
       const controller = new AbortController()
+      // Narrowed one branch at a time, so each reader keeps its own argument type.
+      let pending: Promise<DiffPayload>
+      if (target.kind === 'commit') {
+        if (requestCommit === undefined) return
+        pending = requestCommit({ sessionId, sha: target.sha }, controller.signal)
+      } else {
+        if (requestDiff === undefined) return
+        pending = requestDiff({ sessionId, path: target.path, staged: target.staged }, controller.signal)
+      }
       const outer = info?.tab.signal
       let live = true
       const stop = (): void => { live = false }
       if (outer !== undefined) outer.addEventListener('abort', stop)
       setState({ status: 'loading' })
-      void requestDiff({ sessionId, path, staged }, controller.signal).then(
+      // Both readers fold their own failures into a payload, so what reaches the
+      // rejection arm is a fault the caller could not turn into a value at all.
+      void pending.then(
         (payload) => { if (live) setState({ status: 'ready', payload }) },
         (error: unknown) => { if (live) setState({ status: 'failed', message: messageOf(error) }) },
       )
@@ -214,15 +255,15 @@ export function makeDiffBody(React: unknown, runtime?: DiffRuntime): (props: unk
         outer?.removeEventListener('abort', stop)
         controller.abort()
       }
-    }, [address, path, staged, sessionId, requestDiff, revision])
+    }, [address, key, sessionId, requestDiff, requestCommit, revision, missingReader])
 
     const truncated = state.status === 'ready' && state.payload.kind === 'text'
       && state.payload.truncated === true
-    return R.createElement('div', { className: PREFIX, 'data-git-diff': path },
+    return R.createElement('div', { className: PREFIX, ...identityOf(target) },
       runtime?.stylesInstalled === true ? null : styleElement(R),
-      head(R, t, path, target, state),
+      head(R, t, target, state),
       truncated ? banner(R, t('truncated')) : null,
-      content(R, t, path, state, target),
+      content(R, t, target, state, missingReader),
     )
   }
 
@@ -237,12 +278,14 @@ export function makeDiffBody(React: unknown, runtime?: DiffRuntime): (props: unk
 
   return function DiffBody(props: unknown): unknown {
     const typed = (props ?? {}) as DiffBodyProps
-    // A body without a Session, a tab reader, or a Remote reader has nothing it
-    // could read the diff with, so it states the fault instead of drawing a
-    // skeleton that would never resolve.
+    // A body without a Session or a tab reader has nothing it could read a diff
+    // with, so it states the fault instead of drawing a skeleton that would
+    // never resolve. Either reader alone is enough: a tab shows one target.
+    const reads = typed.requestDiff !== undefined || typed.requestCommit !== undefined
+      || runtime?.requestDiff !== undefined || runtime?.requestCommit !== undefined
     const usable = typeof typed.useTabInfo === 'function'
       && typeof typed.sessionId === 'string'
-      && (typed.requestDiff !== undefined || runtime?.requestDiff !== undefined)
+      && reads
     return R.createElement(usable ? DiffPanel : DiffUnavailable, typed)
   }
 }
@@ -251,11 +294,11 @@ export function makeDiffBody(React: unknown, runtime?: DiffRuntime): (props: unk
  * Build the chip-title component the Sidebar registers under
  * `sidebar.right.pane.tab.title`.
  *
- * A page opened by kind is recorded at `sidebar://<kind>`, which names no file,
- * so the file arrives in the navigation parameters and only a live title can show
- * it. Registering this is optional: without it the chip keeps the title the
- * registry captured when the tab opened, which is the file's basename for an
- * open by `diffAddress`.
+ * A page opened by kind is recorded at `sidebar://<kind>`, which names no
+ * target, so the file or commit arrives in the navigation parameters and only a
+ * live title can show it. Registering this is optional: without it the chip keeps
+ * the title the registry captured when the tab opened, which is already the
+ * file's basename (or the commit's short name) for an open by `diffAddress`.
  * @param React - the loader's React.
  * @param runtime - optional copy.
  * @returns a component taking the slot framework's props.
@@ -269,27 +312,25 @@ export function makeDiffTitle(React: unknown, runtime?: DiffRuntime): (props: un
     const target = targetOf(address, info?.tab.navigation.params)
     const t = translator(typed.t ?? runtime?.t)
     return R.createElement('span', { className: `${PREFIX}-chip` },
-      target === undefined ? t('title') : basenameOf(target.path))
+      target === undefined ? t('title') : labelOf(target))
   }
 }
 
-/** The pane's row: the file, which side it describes, and its line counts. */
+/** The pane's row: the target, which side it describes, and its line counts. */
 function head(
   React: DiffReactSurface,
   t: (key: string) => string,
-  path: string,
   target: DiffTarget | undefined,
   state: ViewState,
 ): unknown {
   const counts = state.status === 'ready' && state.payload.kind === 'text'
     ? countOf(state.payload.hunks)
     : undefined
+  const named = target === undefined ? '' : target.kind === 'file' ? target.path : target.sha
+  const name = named === '' ? t('title') : named
   return React.createElement('div', { className: `${PREFIX}-head` },
-    React.createElement('span', { className: `${PREFIX}-path`, title: path },
-      path === '' ? t('title') : path),
-    target === undefined
-      ? null
-      : React.createElement('span', { className: `${PREFIX}-side` }, t(target.staged ? 'staged' : 'worktree')),
+    React.createElement('span', { className: `${PREFIX}-path`, title: name }, name),
+    target === undefined ? null : React.createElement('span', { className: `${PREFIX}-side` }, sideOf(t, target)),
     counts === undefined
       ? null
       : React.createElement('span', { className: `${PREFIX}-counts` },
@@ -302,16 +343,22 @@ function head(
 function content(
   React: DiffReactSurface,
   t: (key: string) => string,
-  path: string,
-  state: ViewState,
   target: DiffTarget | undefined,
+  state: ViewState,
+  missingReader: boolean,
 ): unknown {
   if (target === undefined) return note(React, t('unknownTarget'))
+  if (missingReader) {
+    return note(React, t(target.kind === 'commit' ? 'commitUnavailable' : 'unavailable'))
+  }
   if (state.status === 'loading') return skeleton(React)
-  if (state.status === 'failed') return note(React, t('failed'), state.message)
+  const failed = target.kind === 'commit' ? t('commitFailed') : t('failed')
+  if (state.status === 'failed') return note(React, failed, state.message)
   const payload = state.payload
-  if (payload.kind === 'error') return note(React, t('failed'), payload.message)
-  if (payload.kind === 'binary') return note(React, t('binary'), path)
+  if (payload.kind === 'error') return note(React, failed, payload.message)
+  if (payload.kind === 'binary') {
+    return note(React, t('binary'), target.kind === 'file' ? target.path : target.sha)
+  }
   if (payload.hunks.length === 0) return note(React, t('empty'))
   const rows = toRows(payload.hunks)
   return React.createElement('div', { className: `${PREFIX}-body` },
@@ -392,18 +439,78 @@ function countOf(hunks: readonly DiffHunk[]): { added: number; removed: number }
 }
 
 /**
- * Read the file a tab describes from whichever target shape it carries.
+ * Read the target a tab describes.
+ *
+ * A commit address wins over a file address, which wins over the navigation
+ * parameters a page open carries; the order matters because a page open records
+ * `sidebar://<kind>` and can therefore name only the parameters.
  * @param address - the tab's live address.
  * @param params - the navigation parameters the open carried.
- * @returns the file, or undefined when neither shape names one.
+ * @returns the target, or undefined when neither shape names one.
  */
 function targetOf(address: string, params: unknown): DiffTarget | undefined {
-  const parsed = parseDiffAddress(address)
-  if (parsed !== undefined) return parsed
+  const fromAddress = addressTarget(address)
+  if (fromAddress !== undefined) return fromAddress
   if (typeof params !== 'object' || params === null) return undefined
-  const record = params as { readonly path?: unknown; readonly staged?: unknown }
+  const record = params as { readonly path?: unknown; readonly staged?: unknown; readonly sha?: unknown }
+  const sha = shaOf(record.sha)
+  if (sha !== undefined) return { kind: 'commit', sha }
   if (typeof record.path !== 'string' || record.path === '') return undefined
-  return { path: record.path, staged: record.staged === true }
+  return { kind: 'file', path: record.path, staged: record.staged === true }
+}
+
+/**
+ * Read the target an address names.
+ * @param address - a diff resource address.
+ * @returns the target, or undefined when the address is foreign.
+ */
+function addressTarget(address: string): DiffTarget | undefined {
+  const sha = parseCommitDiffAddress(address)
+  if (sha !== undefined) return { kind: 'commit', sha }
+  const parsed = parseDiffAddress(address)
+  if (parsed === undefined) return undefined
+  return { kind: 'file', path: parsed.path, staged: parsed.staged }
+}
+
+/** A commit name worth reading, or undefined for anything else. */
+function shaOf(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+}
+
+/** The identity of a target, used to decide whether a read is still current. */
+function targetKey(target: DiffTarget): string {
+  return target.kind === 'commit' ? `commit:${target.sha}` : `file:${target.staged ? 'staged' : 'worktree'}:${target.path}`
+}
+
+/**
+ * The data attributes a diff is located by.
+ *
+ * `data-git-diff` stays the target's own name — a file's path, or a commit's
+ * object name — which is the value the pane carried before commits existed; the
+ * narrowing attribute beside it says which of the two it is.
+ * @param target - what the pane shows, when it shows anything.
+ * @returns the attribute map for the root element.
+ */
+function identityOf(target: DiffTarget | undefined): Record<string, string> {
+  if (target === undefined) return { 'data-git-diff': '' }
+  if (target.kind === 'commit') return { 'data-git-diff': target.sha, 'data-git-diff-commit': target.sha }
+  return { 'data-git-diff': target.path, 'data-git-diff-file': target.path }
+}
+
+/** The chip and row text of a target: a file's basename, or a commit's short name. */
+function labelOf(target: DiffTarget): string {
+  return target.kind === 'commit' ? shortSha(target.sha) : basenameOf(target.path)
+}
+
+/** The first {@link SHORT_SHA} characters of a commit name. */
+function shortSha(sha: string): string {
+  return sha.slice(0, SHORT_SHA)
+}
+
+/** The pill beside the target: which side of the index a file diff reads, or that this is a commit. */
+function sideOf(t: (key: string) => string, target: DiffTarget): string {
+  if (target.kind === 'commit') return t('commit')
+  return t(target.staged ? 'staged' : 'worktree')
 }
 
 /** Narrow a rejection to a line worth showing. */
