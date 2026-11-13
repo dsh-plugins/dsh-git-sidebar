@@ -1,0 +1,260 @@
+/**
+ * The client half's bridge to the Host Remote.
+ *
+ * Three things live here and nowhere else in this bundle: the `$mount` of the
+ * hand-authored namespace, the typed call surface every panel action goes
+ * through, and the unwrapping that turns a failed Remote result into the shape
+ * the panel renders. The loader's React face and the translate signature are
+ * declared here too, so each module that draws reads them from one place.
+ *
+ * No Harness Client package is imported: React arrives from the loader's module
+ * table, and zod from the same table through the entry's `require`.
+ */
+
+import type {
+  CommitOutcome, DiffArgs, DiffPayload, SnapshotProblem, StatusSnapshot, WriteOutcome,
+} from '../shared.ts'
+import { REMOTE_NAMESPACE } from '../shared.ts'
+import { gitSidebarContribution, type RemoteContribution, type ZodLike } from '../remote-descriptor.ts'
+
+/** One localized lookup, read against the active locale at call time. */
+export type Translate = (key: string, params?: Record<string, unknown>) => string
+
+/** The hooks this bundle calls; the loader's React is cast to it once. */
+export interface ReactLike {
+  createElement(type: unknown, props?: unknown, ...children: unknown[]): unknown
+  useState<T>(initial: T): [T, (value: T | ((previous: T) => T)) => void]
+  useEffect(effect: () => (() => void) | void, dependencies: readonly unknown[]): void
+  useCallback<T>(callback: T, dependencies: readonly unknown[]): T
+}
+
+/** The share of a tab's live information a body reads. */
+export interface TabActions {
+  openResource(address: string, options?: { readonly kind?: string }): void
+  openTab(kind: string, options?: { readonly params?: unknown }): void
+}
+
+/** Live information the Sidebar hands a tab body. */
+export interface TabInfo {
+  readonly tab: {
+    readonly actions: TabActions
+  }
+}
+
+/** Props the slot framework passes every `sidebar.right.pane.tab` body. */
+export interface TabBodyProps {
+  readonly sessionId?: string
+  readonly useTabInfo?: () => TabInfo
+}
+
+/** One Start-page entry contributed by a tab type. */
+export interface GuideEntry {
+  readonly id: string
+  readonly order: number
+  title(): string
+  description?(): string
+  readonly icon?: unknown
+}
+
+/** The tab type declaration this bundle registers. */
+export interface TabDefinition {
+  readonly id: string
+  readonly kind: string
+  /** Each open is its own content; omitted keeps one page per kind in each pane. */
+  readonly multiple?: boolean
+  title(address?: string): string
+  readonly guide?: readonly GuideEntry[]
+}
+
+/** Options of one keyed `sidebar.right.pane.tab` registration. */
+export interface SlotRegistration {
+  readonly name: string
+  readonly key?: string
+  readonly id?: string
+  readonly order?: number
+  readonly locale?: string
+}
+
+/** Restricted Cordis context face of a dynamic client bundle. */
+export interface GitClientContext {
+  effect(setup: () => (() => void) | void, label?: string): () => void
+  locale: {
+    register(ns: string, dicts: Record<string, Record<string, string>>): () => void
+    bind(ns: string): Translate
+  }
+  sidebarRightTabs: {
+    register(definition: TabDefinition): () => void
+  }
+  slots: {
+    inject(key: string, callback: () => (() => void) | Iterable<() => void>): () => void
+    register(options: SlotRegistration, component: unknown): () => void
+  }
+  remote: {
+    $mount(contribution: RemoteContribution): Promise<() => Promise<void>>
+  }
+  get(name: string): unknown
+}
+
+/** One endpoint's failure branch, as the Remote carrier reports it. */
+export interface RemoteFailure {
+  readonly code: string
+  readonly message: string
+}
+
+/** Every Remote result: the value, or the reason there is none. */
+export type RemoteResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: RemoteFailure }
+
+/** The mounted `gitSidebar` namespace, typed by the frozen contract in `shared.ts`. */
+export interface GitSidebarRemote {
+  status(args: { readonly sessionId: string }): Promise<RemoteResult<StatusSnapshot>>
+  diff(args: DiffArgs): Promise<RemoteResult<DiffPayload>>
+  stage(args: { readonly sessionId: string; readonly paths: readonly string[] }): Promise<RemoteResult<WriteOutcome>>
+  unstage(args: { readonly sessionId: string; readonly paths: readonly string[] }): Promise<RemoteResult<WriteOutcome>>
+  discard(args: {
+    readonly sessionId: string
+    readonly paths: readonly string[]
+    readonly includeUntracked: boolean
+  }): Promise<RemoteResult<WriteOutcome>>
+  commit(args: { readonly sessionId: string; readonly message: string }): Promise<RemoteResult<CommitOutcome>>
+}
+
+/**
+ * What the panel and the diff tab call: same endpoints, with the failure branch
+ * folded into the business result so every caller renders a value, never a throw.
+ */
+export interface GitSidebarApi {
+  status(sessionId: string): Promise<StatusSnapshot>
+  stage(sessionId: string, paths: readonly string[]): Promise<WriteOutcome>
+  unstage(sessionId: string, paths: readonly string[]): Promise<WriteOutcome>
+  discard(sessionId: string, paths: readonly string[], includeUntracked: boolean): Promise<WriteOutcome>
+  commit(sessionId: string, message: string): Promise<CommitOutcome>
+  requestDiff(args: DiffArgs, signal?: AbortSignal): Promise<DiffPayload>
+}
+
+/** The namespace mount, started at apply time and awaited by the first body that draws. */
+export interface GitRemoteHandle {
+  readonly ready: Promise<GitSidebarApi>
+}
+
+/** A snapshot the panel can draw without inventing data. */
+export function unavailableSnapshot(message: string, problem: SnapshotProblem): StatusSnapshot {
+  return {
+    kind: 'unavailable',
+    problem,
+    staged: [],
+    unstaged: [],
+    conflicts: [],
+    identity: { name: null, email: null },
+    ...message === '' ? {} : { message },
+  }
+}
+
+/**
+ * Read a thrown value as one line worth showing.
+ * @param error - what a promise rejected with, or an Error.
+ * @returns its message, without the class name, or an empty string.
+ */
+export function messageOf(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return typeof error === 'string' ? error : ''
+}
+
+/**
+ * Pick the zod face the Remote descriptors need out of the loader's module.
+ * @param module - `require('zod')`, a namespace or a namespace with a default.
+ * @returns the codec factory, or undefined when the module is not zod.
+ */
+export function resolveZod(module: unknown): ZodLike | undefined {
+  if (typeof module !== 'object' || module === null) return undefined
+  const candidate = module as { readonly object?: unknown; readonly default?: unknown }
+  if (typeof candidate.object === 'function') return module as ZodLike
+  const fallback = candidate.default
+  if (typeof fallback !== 'object' || fallback === null) return undefined
+  if (typeof (fallback as { readonly object?: unknown }).object !== 'function') return undefined
+  return fallback as ZodLike
+}
+
+/**
+ * Mount the `gitSidebar` namespace and hand back its typed surface.
+ *
+ * `$mount` registers its own effect on the caller's context, so the namespace
+ * leaves with the plugin and needs no disposer here. The rejection is retained
+ * on the handle for the body to render, and a sink is attached so a panel that
+ * never draws cannot turn a mount failure into an unhandled rejection.
+ * @param ctx - the bundle's restricted context.
+ * @param zod - the loader's zod.
+ * @returns the handle whose `ready` resolves to the api.
+ */
+export function mountGitRemote(ctx: GitClientContext, zod: ZodLike): GitRemoteHandle {
+  const ready = mountNamespace(ctx, zod)
+  void ready.catch(() => undefined)
+  return { ready }
+}
+
+async function mountNamespace(ctx: GitClientContext, zod: ZodLike): Promise<GitSidebarApi> {
+  await ctx.remote.$mount(gitSidebarContribution(zod))
+  const namespace = ctx.get(`remote.${REMOTE_NAMESPACE}`)
+  if (typeof namespace !== 'object' || namespace === null) {
+    throw new Error(`git-sidebar: the Remote namespace "${REMOTE_NAMESPACE}" did not mount`)
+  }
+  return createApi(namespace as unknown as GitSidebarRemote)
+}
+
+/**
+ * Wrap the mounted namespace in the folding surface the panel calls.
+ * @param remote - the mounted method table.
+ * @returns the api.
+ */
+function createApi(remote: GitSidebarRemote): GitSidebarApi {
+  return {
+    async status(sessionId: string): Promise<StatusSnapshot> {
+      try {
+        const result = await remote.status({ sessionId })
+        if (result.ok) return result.value
+        return unavailableSnapshot(result.error.message, 'failed')
+      } catch (error) {
+        return unavailableSnapshot(messageOf(error), 'failed')
+      }
+    },
+    stage(sessionId: string, paths: readonly string[]): Promise<WriteOutcome> {
+      return foldWrite(() => remote.stage({ sessionId, paths }))
+    },
+    unstage(sessionId: string, paths: readonly string[]): Promise<WriteOutcome> {
+      return foldWrite(() => remote.unstage({ sessionId, paths }))
+    },
+    discard(sessionId: string, paths: readonly string[], includeUntracked: boolean): Promise<WriteOutcome> {
+      return foldWrite(() => remote.discard({ sessionId, paths, includeUntracked }))
+    },
+    async commit(sessionId: string, message: string): Promise<CommitOutcome> {
+      try {
+        const result = await remote.commit({ sessionId, message })
+        if (result.ok) return result.value
+        return { ok: false, problem: 'failed', message: result.error.message }
+      } catch (error) {
+        return { ok: false, problem: 'failed', message: messageOf(error) }
+      }
+    },
+    async requestDiff(args: DiffArgs, signal?: AbortSignal): Promise<DiffPayload> {
+      void signal
+      try {
+        const result = await remote.diff(args)
+        if (result.ok) return result.value
+        return { kind: 'error', message: result.error.message }
+      } catch (error) {
+        return { kind: 'error', message: messageOf(error) }
+      }
+    },
+  }
+}
+
+async function foldWrite(call: () => Promise<RemoteResult<WriteOutcome>>): Promise<WriteOutcome> {
+  try {
+    const result = await call()
+    if (result.ok) return result.value
+    return { ok: false, problem: 'failed', message: result.error.message }
+  } catch (error) {
+    return { ok: false, problem: 'failed', message: messageOf(error) }
+  }
+}

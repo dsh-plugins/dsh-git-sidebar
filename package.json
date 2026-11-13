@@ -37,7 +37,10 @@
     "build": "tsc -p tsconfig.json && node build.mjs",
     "typecheck": "tsc -p tsconfig.json"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@deepseek-ai/dsh-typert-protocol": "^0.2.2-rc.3",
+    "@deepseek-ai/schemastery": "^3.19.0"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.1.0"
   },
@@ -59,6 +62,7 @@
       "platform": "web",
       "immediately": true,
       "inject": [
+        "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-client-ui-sidebar-right"
       ]
     }
