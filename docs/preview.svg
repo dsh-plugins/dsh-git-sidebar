@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300" role="img" aria-label="A Git row in the left sidebar opening a panel with branch, status and commits">
+  <rect width="640" height="300" fill="none"/>
+
+  <!-- Left sidebar rail with the Git row selected. -->
+  <rect x="32" y="32" width="164" height="236" rx="10" fill="#f4f6f8" stroke="#d9dee4"/>
+  <rect x="44" y="60" width="140" height="30" rx="6" fill="#e6eef7" stroke="#b9d0e6"/>
+  <g transform="translate(56 66)">
+    <path d="M9 2v4.5M9 11v4.5" fill="none" stroke="#247bbf" stroke-width="1.6" stroke-linecap="round"/>
+    <circle cx="9" cy="9" r="2.6" fill="none" stroke="#247bbf" stroke-width="1.6"/>
+    <circle cx="9" cy="9" r="1" fill="#247bbf"/>
+  </g>
+  <rect x="82" y="68" width="46" height="8" rx="4" fill="#4a5560"/>
+  <rect x="44" y="104" width="140" height="18" rx="5" fill="#e9edf1"/>
+  <rect x="44" y="132" width="112" height="18" rx="5" fill="#e9edf1"/>
+  <rect x="44" y="160" width="126" height="18" rx="5" fill="#e9edf1"/>
+
+  <!-- Panel content: branch, status, commits. -->
+  <rect x="220" y="32" width="388" height="236" rx="10" fill="#ffffff" stroke="#d9dee4"/>
+  <rect x="244" y="56" width="88" height="9" rx="4.5" fill="#2b333b"/>
+
+  <rect x="244" y="82" width="340" height="34" rx="7" fill="#f4f6f8" stroke="#e0e5ea"/>
+  <circle cx="264" cy="99" r="4" fill="#247bbf"/>
+  <rect x="278" y="95" width="120" height="8" rx="4" fill="#46505a"/>
+
+  <rect x="244" y="128" width="340" height="54" rx="7" fill="#f4f6f8" stroke="#e0e5ea"/>
+  <rect x="262" y="142" width="150" height="7" rx="3.5" fill="#7a848d"/>
+  <rect x="262" y="158" width="98" height="7" rx="3.5" fill="#b3bcc4"/>
+  <rect x="530" y="142" width="36" height="16" rx="8" fill="#e4f1e6" stroke="#b6d6ba"/>
+  <rect x="538" y="148" width="20" height="4" rx="2" fill="#3f8a4b"/>
+
+  <rect x="244" y="194" width="340" height="12" rx="6" fill="#e9edf1"/>
+  <rect x="244" y="216" width="286" height="12" rx="6" fill="#e9edf1"/>
+  <rect x="244" y="238" width="316" height="12" rx="6" fill="#e9edf1"/>
+</svg>
