@@ -23,7 +23,7 @@
  */
 
 import type { DiffArgs, DiffHunk, DiffPayload } from '../shared.ts'
-import { DIFF_TAB_ID, DIFF_TAB_KIND, parseDiffAddress } from '../shared.ts'
+import { DIFF_ADDRESS_PREFIX, DIFF_TAB_ID, DIFF_TAB_KIND, parseDiffAddress } from '../shared.ts'
 import { basenameOf, toRows, type DiffRow } from './diff-parse.ts'
 
 /**
@@ -40,12 +40,17 @@ export interface DiffReactSurface {
   useEffect(effect: () => (() => void) | void, deps: readonly unknown[]): void
 }
 
-/** The tab type declaration the Sidebar registers; `patterns` and `guide` stay unset on purpose. */
+/** The tab type declaration the Sidebar registers; `guide` stays unset on purpose. */
 export interface DiffTabDefinition {
   readonly id: string
   readonly kind: string
   /** Each open is its own content: a page open must not fold a second file into the first file's tab. */
   readonly multiple: boolean
+  /**
+   * Resource globs this type claims. Naming the package's own address scheme
+   * lets a diff open as a resource tab, which keeps one tab per file.
+   */
+  readonly patterns?: readonly string[]
   /**
    * The chip text, taken from the address the tab opened with.
    *
@@ -161,6 +166,9 @@ export const DIFF_TAB_DEFINITION: DiffTabDefinition = {
   id: DIFF_TAB_ID,
   kind: DIFF_TAB_KIND,
   multiple: true,
+  // Claim this package's resource scheme so a diff opens as a resource tab:
+  // that is what gives it a per-file identity and a chip naming the file.
+  patterns: [`${DIFF_ADDRESS_PREFIX}**`],
   title: (address?: string): string => {
     const parsed = address === undefined ? undefined : parseDiffAddress(address)
     return parsed === undefined ? DEFAULT_TITLE : basenameOf(parsed.path)

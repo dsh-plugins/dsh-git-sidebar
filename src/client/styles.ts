@@ -58,7 +58,6 @@ export const PANEL_STYLES = `
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 .gs-tool {
   display: inline-flex;
   flex: none;
@@ -129,10 +128,8 @@ export const PANEL_STYLES = `
   flex: none;
   margin: 0;
   color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .gs-group[data-tone='error'] .gs-group-title {
@@ -275,6 +272,22 @@ export const PANEL_STYLES = `
   opacity: 1;
 }
 
+/*
+ * A pointer that cannot hover leaves the controls hidden, and a reader who does
+ * not know they exist never reaches them. A dimmed always-on state keeps the
+ * row quiet while still showing that the row can act.
+ */
+@media (hover: none) {
+  .gs-actions {
+    opacity: 0.55;
+  }
+
+  .gs-row:hover .gs-actions,
+  .gs-row:focus-within .gs-actions {
+    opacity: 1;
+  }
+}
+
 .gs-action {
   display: inline-flex;
   align-items: center;
@@ -402,8 +415,10 @@ export const PANEL_STYLES = `
 
 .gs-commit-submit {
   flex: none;
+  box-sizing: border-box;
+  min-width: 72px;
   height: 28px;
-  padding: 0 12px;
+  padding: 0 14px;
   color: var(--dsw-alias-label-primary-foreground);
   font: inherit;
   font-weight: 600;
@@ -413,9 +428,14 @@ export const PANEL_STYLES = `
   cursor: pointer;
 }
 
+/*
+ * A disabled control keeps its shape: without a border the fill of the resting
+ * button disappears against the panel, and the action stops reading as one.
+ */
 .gs-commit-submit:disabled {
   color: var(--dsw-alias-label-tertiary);
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l3);
   cursor: default;
 }
 

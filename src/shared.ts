@@ -129,8 +129,14 @@ export const DIFF_TAB_ID = '@dsh-plugin/dsh-git-sidebar/diff'
 /** Tab kind the panel opens for one file's diff. */
 export const DIFF_TAB_KIND = 'git-diff'
 
-/** Address prefix identifying a diff tab's content. */
-export const DIFF_ADDRESS_PREFIX = 'dsh-git-sidebar-diff://'
+/**
+ * Address prefix identifying a diff tab's content.
+ *
+ * The Sidebar's resource controller accepts `dsh-resource://` addresses only,
+ * so the diff address uses that scheme with this package's own type segment.
+ * That keeps one tab per file and lets the tab chip name the file.
+ */
+export const DIFF_ADDRESS_PREFIX = 'dsh-resource://git-diff/'
 
 /**
  * Compose a diff tab address.

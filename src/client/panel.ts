@@ -16,7 +16,7 @@
 import type {
   ChangeEntry, GitIdentity, StatusSnapshot, WriteOutcome,
 } from '../shared.ts'
-import { DIFF_TAB_KIND } from '../shared.ts'
+import { DIFF_TAB_KIND, diffAddress } from '../shared.ts'
 import type {
   GitRemoteHandle, GitSidebarApi, ReactLike, TabBodyProps, TabInfo, Translate,
 } from './api.ts'
@@ -229,6 +229,25 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     }
 
     const total = snapshot.staged.length + snapshot.unstaged.length + snapshot.conflicts.length
+    // With nothing to show, the groups and the commit box would offer empty
+    // controls next to a sentence saying exactly that.
+    if (total === 0) {
+      return React.createElement('section', {
+        className: `${PREFIX}-root`,
+        'data-git-panel': '',
+        ...busy ? { 'data-git-busy': '' } : {},
+      },
+      branchHeader(React, t, snapshot, loading, refresh),
+      notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
+      stateBlock(React, t('state.clean.title'), t('state.clean.body')),
+      React.createElement('div', {
+        className: `${PREFIX}-history-slot`,
+        'data-git-history-slot': '',
+        style: { flex: 1, minHeight: 0, overflow: 'auto' },
+      }),
+      )
+    }
+
     return React.createElement('section', {
       className: `${PREFIX}-root`,
       'data-git-panel': '',
@@ -237,7 +256,6 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       branchHeader(React, t, snapshot, loading, refresh),
       React.createElement('div', { className: `${PREFIX}-body` },
         notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
-        total === 0 ? stateBlock(React, t('state.clean.title'), t('state.clean.body')) : null,
         changeGroup(React, {
           title: t('group.staged'),
           group: 'staged',
@@ -326,17 +344,23 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
 /**
  * Open one file's diff as its own tab.
  *
- * The Sidebar's `openResource` accepts `dsh-resource://` addresses only, and a
- * diff address is this package's own scheme, so the viewer is opened by kind and
- * handed its file through the navigation parameters; it declares `multiple`, so
- * two files are two tabs rather than one tab re-navigated.
+ * A diff address uses the `dsh-resource://` scheme with this package's type
+ * segment, so the Sidebar's resource controller accepts it: each file gets its
+ * own tab, and repeated opens of the same file focus the existing one.
  * @param tab - the panel's own tab.
  * @param path - the changed file.
  * @param staged - which side of the index to read.
  */
 function openFileDiff(tab: TabInfo['tab'] | undefined, path: string, staged: boolean): void {
   if (tab === undefined) return
-  tab.actions.openTab(DIFF_TAB_KIND, { params: { path, staged } })
+  tab.actions.openResource(diffAddress(path, staged), { kind: DIFF_TAB_KIND })
+}
+
+/** The last segment of a filesystem path, for the narrow repository label. */
+function lastSegment(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '')
+  const cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return cut < 0 ? trimmed : trimmed.slice(cut + 1)
 }
 
 /**
@@ -376,7 +400,13 @@ function branchHeader(
       }, label),
     root === undefined
       ? null
-      : React.createElement('span', { className: `${PREFIX}-sub`, title: root }, root),
+      : React.createElement('span', {
+        className: `${PREFIX}-sub`,
+        title: root,
+        // The column is narrow, so the reading shows the last segment while the
+        // tooltip keeps the whole path.
+        'data-full': root,
+      }, lastSegment(root)),
     React.createElement('button', {
       type: 'button',
       className: `${PREFIX}-tool`,
