@@ -21,6 +21,7 @@ export interface ZodLike {
   strictObject(shape: Record<string, unknown>): unknown
   string(): { optional(): unknown }
   boolean(): unknown
+  number(): unknown
   array(item: unknown): unknown
 }
 
@@ -58,7 +59,11 @@ export interface RemoteContribution {
 }
 
 /** Method names in the order the contract check expects to find them. */
-export const REMOTE_METHODS = ['status', 'diff', 'stage', 'unstage', 'discard', 'commit'] as const
+export const REMOTE_METHODS = [
+  'status', 'diff', 'stage', 'unstage', 'discard', 'commit',
+  'history', 'commitDetail', 'branches', 'checkout', 'createBranch',
+  'stashes', 'stash', 'stashApply', 'sync',
+] as const
 
 /** One method of the mounted namespace. */
 export type RemoteMethodName = typeof REMOTE_METHODS[number]
@@ -114,6 +119,19 @@ export function gitSidebarContribution(zod: ZodLike): RemoteContribution {
       descriptor('unstage', () => ({ sessionId: zod.string(), paths: strings() })),
       descriptor('discard', () => ({ sessionId: zod.string(), paths: strings(), includeUntracked: zod.boolean() })),
       descriptor('commit', () => ({ sessionId: zod.string(), message: zod.string() })),
+      descriptor('history', () => ({ sessionId: zod.string(), limit: zod.number(), skip: zod.number() })),
+      descriptor('commitDetail', () => ({ sessionId: zod.string(), sha: zod.string() })),
+      descriptor('branches', () => ({ sessionId: zod.string() })),
+      descriptor('checkout', () => ({ sessionId: zod.string(), branch: zod.string() })),
+      descriptor('createBranch', () => ({ sessionId: zod.string(), name: zod.string(), from: zod.string().optional() })),
+      descriptor('stashes', () => ({ sessionId: zod.string() })),
+      descriptor('stash', () => ({ sessionId: zod.string(), message: zod.string().optional() })),
+      descriptor('stashApply', () => ({
+        sessionId: zod.string(),
+        index: zod.number(),
+        drop: zod.boolean(),
+      })),
+      descriptor('sync', () => ({ sessionId: zod.string(), action: zod.string() })),
     ],
   }
 }

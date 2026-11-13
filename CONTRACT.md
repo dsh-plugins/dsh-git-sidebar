@@ -7,12 +7,12 @@
 
 | 目录 / 文件 | 所有者 |
 | --- | --- |
-| `src/shared.ts`、`src/remote-descriptor.ts`、`package.json`、`build.mjs`、`tsconfig.json` | lead |
-| `src/index.ts`、`src/host/**` | A（宿主层） |
-| `src/client/**`（除 `diff-*.ts`）、`src/client.ts` | B（客户端层） |
-| `src/client/diff-tab.ts`、`src/client/diff-parse.ts` | C（diff 层） |
-| `run/**` | D（测试层） |
-| `README.md`、`docs/**`、`locale/**` | lead（收尾阶段） |
+| `src/shared.ts`、`src/remote-descriptor.ts`、`package.json`、`build.mjs`、`tsconfig.json`、`CONTRACT.md`、`P1-PLAN.md` | lead |
+| `src/host/**`、`src/index.ts` | 宿主层 agent |
+| `src/client/**`（除 `diff-*.ts`）、`src/client.ts` | 客户端层 agent |
+| `src/client/diff-tab.ts`、`src/client/diff-parse.ts` | diff 层 agent |
+| `run/**` | 测试层 agent |
+| `README.md`、`docs/**`、`locale/**`、`FEATURES.md` | lead |
 
 C 的 `diff-tab.ts` 导出：
 
@@ -28,18 +28,29 @@ B 在 `src/client.ts` 里 import 这两个并按 `ctx.slots.register` 注册，�
 
 ## Remote 契约
 
-命名空间 `gitSidebar`。六个方法，每个都只收一个具名参数对象：
+命名空间 `gitSidebar`。方法（每个只收一个具名参数对象）：
 
-| 方法 | 参数 | 返回 |
-| --- | --- | --- |
-| `status` | `StatusArgs` | `StatusSnapshot` |
-| `diff` | `DiffArgs` | `DiffPayload` |
-| `stage` | `PathsArgs` | `WriteOutcome` |
-| `unstage` | `PathsArgs` | `WriteOutcome` |
-| `discard` | `DiscardArgs` | `WriteOutcome` |
-| `commit` | `CommitArgs` | `CommitOutcome` |
+| 方法 | 参数 | 返回 | 阶段 |
+| --- | --- | --- | --- |
+| `status` | `StatusArgs` | `StatusSnapshot` | P0 |
+| `diff` | `DiffArgs` | `DiffPayload` | P0 |
+| `stage` | `PathsArgs` | `WriteOutcome` | P0 |
+| `unstage` | `PathsArgs` | `WriteOutcome` | P0 |
+| `discard` | `DiscardArgs` | `WriteOutcome` | P0 |
+| `commit` | `CommitArgs` | `CommitOutcome` | P0 |
+| `history` | `HistoryArgs` | `HistoryPage` | P1 |
+| `commitDetail` | `CommitDetailArgs` | `DiffPayload` | P1 |
+| `branches` | `BranchListArgs` | `BranchList` | P1 |
+| `checkout` | `CheckoutArgs` | `WriteOutcome` | P1 |
+| `createBranch` | `CreateBranchArgs` | `WriteOutcome` | P1 |
+| `stashes` | `StashListArgs` | `readonly StashEntry[]` | P1 |
+| `stash` | `StashArgs` | `WriteOutcome` | P1 |
+| `stashApply` | `StashApplyArgs` | `WriteOutcome` | P1 |
+| `sync` | `SyncArgs` | `WriteOutcome` | P1 |
 
 全部类型定义见 `src/shared.ts`。**字段名以该文件为准，不要另起名字。**
+
+`WriteProblem` 在 P1 增加 `dirty`（有未提交改动，拒绝切换分支）、`invalid-name`、`exists`。
 
 ## 宿主侧要点
 

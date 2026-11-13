@@ -24,6 +24,22 @@ export interface GitIdentity {
   readonly email: string | null
 }
 
+/** The upstream a branch tracks, and how far apart the two sides are. */
+export interface Upstream {
+  /** The tracked ref, such as `origin/main`. */
+  readonly name: string
+  /** Commits the local branch has that the upstream does not. */
+  readonly ahead: number
+  /** Commits the upstream has that the local branch does not. */
+  readonly behind: number
+}
+
+/**
+ * A Git operation in progress. Only one can be, and a panel that knows which
+ * one can explain a dirty tree the user did not produce.
+ */
+export type OperationKind = 'merge' | 'rebase' | 'cherry-pick' | 'revert'
+
 /** Why a snapshot carries no usable changes. */
 export type SnapshotProblem = 'no-repository' | 'no-directory' | 'git-missing' | 'failed'
 
@@ -43,6 +59,10 @@ export interface StatusSnapshot {
   readonly unstaged: readonly ChangeEntry[]
   readonly conflicts: readonly ChangeEntry[]
   readonly identity: GitIdentity
+  /** The tracked upstream, or null when the branch tracks none. */
+  readonly upstream?: Upstream | null
+  /** The operation the repository is in the middle of, or null. */
+  readonly operation?: OperationKind | null
   /** Human-readable reason for `unavailable`; never a raw multi-line dump. */
   readonly message?: string
 }
@@ -77,7 +97,7 @@ export type CommitOutcome =
   | { readonly ok: false; readonly problem: CommitProblem; readonly message: string }
 
 /** Why a staging or discard request refused. */
-export type WriteProblem = 'no-paths' | 'failed'
+export type WriteProblem = 'no-paths' | 'failed' | 'dirty' | 'invalid-name' | 'exists'
 
 /** The result of a staging or discard request; every success returns the new snapshot. */
 export type WriteOutcome =
@@ -109,6 +129,112 @@ export interface DiscardArgs extends PathsArgs {
 export interface CommitArgs {
   readonly sessionId: string
   readonly message: string
+}
+
+/** One entry of the commit history. */
+export interface CommitEntry {
+  /** Full object name. */
+  readonly sha: string
+  /** Abbreviated object name Git prints by default. */
+  readonly short: string
+  /** The first line of the message. */
+  readonly subject: string
+  readonly author: string
+  /** Author date, ISO 8601. */
+  readonly when: string
+  /** Branch, tag, and HEAD decorations pointing at this commit. */
+  readonly refs: readonly string[]
+}
+
+/** Arguments of the history page. */
+export interface HistoryArgs {
+  readonly sessionId: string
+  /** Most commits to return. */
+  readonly limit: number
+  /** Commits to skip, for the next page. */
+  readonly skip: number
+}
+
+/** The commit history page, and whether more commits follow it. */
+export interface HistoryPage {
+  readonly commits: readonly CommitEntry[]
+  readonly hasMore: boolean
+}
+
+/** Arguments of one commit's own diff. */
+export interface CommitDetailArgs {
+  readonly sessionId: string
+  readonly sha: string
+}
+
+/** One local branch. */
+export interface BranchEntry {
+  readonly name: string
+  /** Whether this branch is the checked-out one. */
+  readonly current: boolean
+}
+
+/** What the branch picker offers. */
+export interface BranchList {
+  readonly current: string | null
+  readonly local: readonly string[]
+  readonly remote: readonly string[]
+}
+
+/** Arguments of the branch list. */
+export interface BranchListArgs {
+  readonly sessionId: string
+}
+
+/** Arguments of a branch checkout. */
+export interface CheckoutArgs {
+  readonly sessionId: string
+  readonly branch: string
+}
+
+/** Arguments of a branch creation. */
+export interface CreateBranchArgs {
+  readonly sessionId: string
+  readonly name: string
+  /** Commit or branch to start from; HEAD when omitted. */
+  readonly from?: string
+}
+
+/** One stash entry. */
+export interface StashEntry {
+  /** Its position, 0 being the newest; the value `stash@{n}` takes. */
+  readonly index: number
+  /** The reflog subject, which carries the message the user wrote. */
+  readonly subject: string
+}
+
+/** Arguments of the stash list. */
+export interface StashListArgs {
+  readonly sessionId: string
+}
+
+/** Arguments of a stash push. */
+export interface StashArgs {
+  readonly sessionId: string
+  /** Message to store with the entry; Git's own default when omitted. */
+  readonly message?: string
+}
+
+/** Arguments of a stash apply or pop. */
+export interface StashApplyArgs {
+  readonly sessionId: string
+  readonly index: number
+  /** Pop removes the entry after applying it; apply keeps it. */
+  readonly drop: boolean
+}
+
+/** The network operation a sync request names. */
+export type SyncAction = 'fetch' | 'pull' | 'push'
+
+/** Arguments of a sync request. */
+export interface SyncArgs {
+  readonly sessionId: string
+  readonly action: SyncAction
 }
 
 /** Namespace the Host service binds and the client mounts under. */
