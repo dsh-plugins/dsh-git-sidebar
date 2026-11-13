@@ -10,14 +10,21 @@
 
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  CommitArgs, CommitOutcome, DiffArgs, DiffPayload, DiscardArgs, PathsArgs, StatusArgs, StatusSnapshot, WriteOutcome,
+  BranchList, BranchListArgs, CheckoutArgs, CommitArgs, CommitDetailArgs, CommitOutcome, CreateBranchArgs,
+  DiffArgs, DiffPayload, DiscardArgs, HistoryArgs, HistoryPage, PathsArgs, StashApplyArgs, StashArgs, StashEntry,
+  StashListArgs, StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_METHODS } from '../remote-descriptor.ts'
+import {
+  checkout, createBranch, hasTrackedChanges, isValidBranchName, isSyncAction, stashApply, stashPush, sync,
+  validStashIndex,
+} from './branch.ts'
 import type { HostContext, HostSession } from './context.ts'
 import { readDiff } from './diff.ts'
 import type { DiffConfig } from './diff.ts'
-import { GitMissingError, gitIn } from './git.ts'
-import type { Git, GitConfig } from './git.ts'
+import { GitFailure, GitMissingError, gitIn } from './git.ts'
+import type { GitConfig, GitRunner } from './git.ts'
+import { readBranches, readCommitDiff, readHistory, readStashes, readUpstream } from './refs.ts'
 import { NoRepository, messageOf, readIdentity, readStatus, unavailable } from './status.ts'
 import { commitStaged, hasStagedChanges, write } from './write.ts'
 import type { WriteKind } from './write.ts'
@@ -29,6 +36,8 @@ const REMOTE_METHOD_DESCRIPTOR = '@deepseek-ai/dsh-typert-protocol/remote-method
 export interface ServiceConfig extends DiffConfig {
   /** Git executable name or absolute path. */
   readonly gitCommand: string
+  /** Deadline for one network command such as fetch, pull, or push. */
+  readonly syncTimeoutMs: number
 }
 
 /** One resolved Session and its directory. */
@@ -85,6 +94,172 @@ export class GitSidebarService extends TypertRemoteService {
       { path: args.path, staged: args.staged === true },
       this.signalOf(),
     )
+  }
+
+  /**
+   * Read one page of the commit history.
+   * @param args - the Session, the page size, and the offset.
+   * @returns the page, or an empty one when the Session has no checkout.
+   */
+  async history(args?: HistoryArgs): Promise<HistoryPage> {
+    const target = this.targetOf(args?.sessionId)
+    if (target === undefined) return { commits: [], hasMore: false }
+    try {
+      return await readHistory(this.home, this.config, target.session, target.directory, {
+        sessionId: target.session.id,
+        limit: typeof args?.limit === 'number' ? args.limit : 20,
+        skip: typeof args?.skip === 'number' ? args.skip : 0,
+      }, this.signalOf())
+    } catch {
+      return { commits: [], hasMore: false }
+    }
+  }
+
+  /**
+   * Read one commit's own patch.
+   * @param args - the Session and the commit to show.
+   * @returns the patch, or the reason it is unavailable.
+   */
+  async commitDetail(args?: CommitDetailArgs): Promise<DiffPayload> {
+    const target = this.targetOf(args?.sessionId)
+    if (target === undefined || typeof args?.sha !== 'string') {
+      return { kind: 'error', message: 'commitDetail requires a session and a commit' }
+    }
+    return await readCommitDiff(this.home, this.config, target.session, target.directory, {
+      sessionId: target.session.id,
+      sha: args.sha,
+    }, this.signalOf())
+  }
+
+  /**
+   * List the branches the Session's checkout offers.
+   * @param args - the Session.
+   * @returns the checked-out branch and both ref groups.
+   */
+  async branches(args?: BranchListArgs): Promise<BranchList> {
+    const target = this.targetOf(args?.sessionId)
+    if (target === undefined) return { current: null, local: [], remote: [] }
+    try {
+      return await readBranches(this.home, this.config, target.session, target.directory, this.signalOf())
+    } catch {
+      return { current: null, local: [], remote: [] }
+    }
+  }
+
+  /**
+   * Switch the checkout to an existing local branch.
+   * @param args - the Session and the branch.
+   * @returns the new snapshot, or the refusal.
+   */
+  async checkout(args?: CheckoutArgs): Promise<WriteOutcome> {
+    const branch = typeof args?.branch === 'string' ? args.branch.trim() : ''
+    if (branch.length === 0) return { ok: false, problem: 'no-paths', message: 'checkout needs a branch' }
+    return await this.writeWith(args?.sessionId, async (git, session, directory) => {
+      const listed = await readBranches(this.home, this.config, session, directory, this.signalOf())
+      if (!listed.local.includes(branch)) {
+        return { ok: false, problem: 'invalid-name', message: `no local branch is named ${branch}` }
+      }
+      if (await hasTrackedChanges(git)) {
+        return { ok: false, problem: 'dirty', message: 'the working tree has changes a checkout would lose' }
+      }
+      await checkout(git, branch)
+      return null
+    })
+  }
+
+  /**
+   * Create a branch and switch to it.
+   * @param args - the Session, the new name, and the start point.
+   * @returns the new snapshot, or the refusal.
+   */
+  async createBranch(args?: CreateBranchArgs): Promise<WriteOutcome> {
+    const name = typeof args?.name === 'string' ? args.name.trim() : ''
+    if (name.length === 0) return { ok: false, problem: 'no-paths', message: 'a branch needs a name' }
+    const from = typeof args?.from === 'string' && args.from.trim().length > 0 ? args.from.trim() : undefined
+    return await this.writeWith(args?.sessionId, async (git, session, directory) => {
+      if (!(await isValidBranchName(git, name))) {
+        return { ok: false, problem: 'invalid-name', message: `${name} is not a valid branch name` }
+      }
+      const listed = await readBranches(this.home, this.config, session, directory, this.signalOf())
+      if (listed.local.includes(name)) {
+        return { ok: false, problem: 'exists', message: `a branch named ${name} already exists` }
+      }
+      if (await hasTrackedChanges(git)) {
+        return { ok: false, problem: 'dirty', message: 'the working tree has changes a checkout would lose' }
+      }
+      await createBranch(git, name, from)
+      return null
+    })
+  }
+
+  /**
+   * List the stash entries of the Session's checkout.
+   * @param args - the Session.
+   * @returns the entries, newest first.
+   */
+  async stashes(args?: StashListArgs): Promise<readonly StashEntry[]> {
+    const target = this.targetOf(args?.sessionId)
+    if (target === undefined) return []
+    try {
+      return await readStashes(this.home, this.config, target.session, target.directory, this.signalOf())
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Store the working tree in a new stash entry.
+   * @param args - the Session and the optional message.
+   * @returns the new snapshot, or the refusal.
+   */
+  async stash(args?: StashArgs): Promise<WriteOutcome> {
+    const message = typeof args?.message === 'string' ? args.message : undefined
+    return await this.writeWith(args?.sessionId, async (git) => {
+      await stashPush(git, message)
+      return null
+    })
+  }
+
+  /**
+   * Apply or pop one stash entry.
+   * @param args - the Session, the entry's index, and whether to remove it.
+   * @returns the new snapshot, or the refusal.
+   */
+  async stashApply(args?: StashApplyArgs): Promise<WriteOutcome> {
+    if (!validStashIndex(args?.index)) {
+      return { ok: false, problem: 'invalid-name', message: 'the stash index is not a possible entry' }
+    }
+    const index = args.index
+    const drop = args.drop === true
+    return await this.writeWith(args?.sessionId, async (git) => {
+      await stashApply(git, index, drop)
+      return null
+    })
+  }
+
+  /**
+   * Run one network operation against the branch's upstream.
+   * @param args - the Session and which operation to run.
+   * @returns the new snapshot, or the refusal.
+   */
+  async sync(args?: SyncArgs): Promise<WriteOutcome> {
+    if (!isSyncAction(args?.action)) {
+      return { ok: false, problem: 'failed', message: 'sync needs fetch, pull, or push' }
+    }
+    const action = args.action
+    return await this.writeWith(args?.sessionId, async (git, session, directory) => {
+      // A network command gets the longer deadline: a fetch or push routinely
+      // outlives the limit that is right for a local read.
+      const network = gitIn(
+        this.home,
+        { ...this.config, timeoutMs: this.config.syncTimeoutMs },
+        session,
+        directory,
+        this.signalOf(),
+      )
+      await sync(network, action)
+      return null
+    })
   }
 
   /**
@@ -155,23 +330,48 @@ export class GitSidebarService extends TypertRemoteService {
     paths: unknown,
     includeUntracked: boolean,
   ): Promise<WriteOutcome> {
-    const session = this.sessionOf(sessionId)
-    const directory = session === undefined ? undefined : this.directoryOf(session)
-    if (session === undefined || directory === undefined) {
-      return { ok: false, problem: 'failed', message: 'the session has no working directory' }
-    }
     const wanted = Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string') : []
     if (wanted.length === 0) return { ok: false, problem: 'no-paths', message: 'no paths were given' }
+    return await this.writeWith(sessionId, async (git) => {
+      await write(git, kind, { paths: wanted, includeUntracked })
+      return null
+    })
+  }
+
+  /**
+   * Run one write behind the shared Session, root, and failure handling.
+   *
+   * A helper that returns a refusal keeps it; one that returns null succeeded,
+   * and the outcome then carries the snapshot this read produced.
+   * @param sessionId - the Session from the wire.
+   * @param action - the Git work to perform.
+   * @returns the new snapshot, or the refusal.
+   */
+  private async writeWith(
+    sessionId: unknown,
+    action: (git: GitRunner, session: HostSession, directory: string) => Promise<WriteOutcome | null>,
+  ): Promise<WriteOutcome> {
+    const target = this.targetOf(sessionId)
+    if (target === undefined) {
+      return { ok: false, problem: 'failed', message: 'the session has no working directory' }
+    }
     try {
-      const root = await this.rootOf(session, directory)
-      await write(gitIn(this.home, this.config, session, root, this.signalOf()), kind, {
-        paths: wanted,
-        includeUntracked,
-      })
-      return { ok: true, snapshot: await this.snapshot(session, root) }
+      const root = await this.rootOf(target.session, target.directory)
+      const refusal = await action(gitIn(this.home, this.config, target.session, root, this.signalOf()),
+        target.session, root)
+      if (refusal !== null) return refusal
+      return { ok: true, snapshot: await this.snapshot(target.session, root) }
     } catch (error) {
       return { ok: false, problem: 'failed', message: messageOf(error) }
     }
+  }
+
+  /** Resolve a Session and its directory together, for the read endpoints that need both. */
+  private targetOf(sessionId: unknown): Target | undefined {
+    const session = this.sessionOf(sessionId)
+    if (session === undefined) return undefined
+    const directory = this.directoryOf(session)
+    return directory === undefined ? undefined : { session, directory }
   }
 
   /** Read a snapshot, folding every failure into the unavailable shape. */
@@ -184,8 +384,6 @@ export class GitSidebarService extends TypertRemoteService {
       return unavailable('failed', messageOf(error))
     }
   }
-
-  /** Resolve the repository root, or fail the same way the snapshot does. */
   private async rootOf(session: HostSession, directory: string): Promise<string> {
     const snapshot = await this.snapshot(session, directory)
     if (snapshot.kind === 'repository' && snapshot.root !== undefined) return snapshot.root

@@ -12,6 +12,7 @@ import type { HostContext, HostSession } from './context.ts'
 import { GitFailure, gitIn } from './git.ts'
 import type { Git, GitConfig } from './git.ts'
 import { firstLine, parseName, parseStatus, parseTopLevel } from './parse.ts'
+import { readOperation, readUpstream } from './refs.ts'
 
 /** Raised when the directory is not inside a Git checkout. */
 export class NoRepository extends Error {
@@ -47,11 +48,13 @@ export async function readStatus(
 ): Promise<StatusSnapshot> {
   const root = await topLevel(gitIn(ctx, config, session, directory, signal))
   const git = gitIn(ctx, config, session, root, signal)
-  const [status, branch, commit, identity] = await Promise.all([
+  const [status, branch, commit, identity, upstream, operation] = await Promise.all([
     git('status', ['status', '--porcelain=v2', '-z', '--untracked-files=all']),
     git('symbolic-ref', ['symbolic-ref', '--quiet', '--short', 'HEAD'], [0, 1, 128]),
     git('rev-parse', ['rev-parse', '--short', 'HEAD'], [0, 128]),
     readIdentity(git),
+    readUpstream(git),
+    readOperation(git),
   ])
   const parsed = parseStatus(status.stdout, status.truncated)
   return {
@@ -63,6 +66,8 @@ export async function readStatus(
     unstaged: parsed.unstaged,
     conflicts: parsed.conflicts,
     identity,
+    upstream,
+    operation,
   }
 }
 

@@ -24,6 +24,8 @@ export const inject = ['subprocess', 'sandbox', 'sandboxPolicy', 'workingDirecto
 export const Config = z.object({
   gitCommand: z.string().default('git').description('Git executable name or absolute path.'),
   timeoutMs: z.number().min(1000).max(120000).default(15000).description('Deadline for one git command.'),
+  syncTimeoutMs: z.number().min(5000).max(600000).default(60000)
+    .description('Deadline for one network command such as fetch, pull, or push.'),
   maxOutputBytes: z.number().min(65536).max(67108864).default(4194304)
     .description('Largest captured stdout or stderr per command.'),
   graceMs: z.number().min(0).max(30000).default(2000).description('Termination grace for each process.'),
@@ -35,6 +37,7 @@ export const Config = z.object({
 export type GitSidebarConfig = {
   gitCommand: string
   timeoutMs: number
+  syncTimeoutMs: number
   maxOutputBytes: number
   graceMs: number
   maxDiffBytes: number

@@ -46,6 +46,34 @@ export interface GitOutput {
  */
 export type Git = (name: string, args: readonly string[], allowedExitCodes?: readonly number[]) => Promise<GitOutput>
 
+/** Per-call overrides for the process limits. */
+export interface GitCallOptions {
+  /** Deadline for this command, overriding `timeoutMs`. */
+  readonly timeoutMs?: number
+  /** Capture limit for this command, overriding `maxOutputBytes`. */
+  readonly maxOutputBytes?: number
+}
+
+/**
+ * A runner that can also take per-call limits.
+ *
+ * A network command and a local `rev-parse` do not deserve the same deadline,
+ * so the panel's longer sync operations ask for more time explicitly instead of
+ * raising the limit for every read.
+ */
+export type GitRunner = Git & {
+  /**
+   * Run one subcommand under explicit limits.
+   * @param name - short command label used in error messages.
+   * @param args - the subcommand and its arguments, prefix excluded.
+   * @param options - the limits to apply to this call only.
+   * @param allowedExitCodes - exit codes that are not failures; defaults to `[0]`.
+   * @returns the captured output and exit code.
+   */
+  with(name: string, args: readonly string[], options: GitCallOptions,
+    allowedExitCodes?: readonly number[]): Promise<GitOutput>
+}
+
 /** Thrown when the configured Git executable cannot be resolved in this execution world. */
 export class GitMissingError extends Error {
   override name = 'GitMissingError'
@@ -111,7 +139,7 @@ function deadline(upstream: AbortSignal, timeoutMs: number): Deadline {
  * @param session - Session whose sandbox policy applies.
  * @param directory - working directory of every command.
  * @param signal - cancellation of every command.
- * @returns the runner.
+ * @returns the runner, which also accepts per-call limits through `.with`.
  */
 export function gitIn(
   ctx: HostContext,
@@ -119,10 +147,25 @@ export function gitIn(
   session: HostSession,
   directory: string,
   signal: AbortSignal,
-): Git {
+): GitRunner {
   const policy = ctx.sandboxPolicy.resolve({ session })
-  return async (name, args, allowedExitCodes = [0]) =>
-    await runGit(ctx, config, policy, directory, name, args, signal, allowedExitCodes)
+  const run = async (
+    name: string,
+    args: readonly string[],
+    options: GitCallOptions,
+    allowedExitCodes: readonly number[] = [0],
+  ): Promise<GitOutput> =>
+    await runGit(ctx, config, policy, directory, name, args, signal, allowedExitCodes, options)
+  const runner = async (name: string, args: readonly string[], allowedExitCodes: readonly number[] = [0]) =>
+    await run(name, args, {}, allowedExitCodes)
+  return Object.assign(runner, {
+    with: async (
+      name: string,
+      args: readonly string[],
+      options: GitCallOptions,
+      allowedExitCodes: readonly number[] = [0],
+    ) => await run(name, args, options, allowedExitCodes),
+  })
 }
 
 async function runGit(
@@ -134,8 +177,10 @@ async function runGit(
   args: readonly string[],
   signal: AbortSignal,
   allowedExitCodes: readonly number[],
+  options: GitCallOptions = {},
 ): Promise<GitOutput> {
-  const timeout = deadline(signal, config.timeoutMs)
+  const timeout = deadline(signal, options.timeoutMs ?? config.timeoutMs)
+  const maxBytes = options.maxOutputBytes ?? config.maxOutputBytes
   try {
     const program = await resolve(ctx, config.gitCommand, timeout.signal)
     const command = [program, ...GIT_PREFIX, ...args]
@@ -151,8 +196,8 @@ async function runGit(
       graceMs: config.graceMs,
       stdio: {
         stdin: 'ignore',
-        stdout: { maxBytes: config.maxOutputBytes },
-        stderr: { maxBytes: config.maxOutputBytes },
+        stdout: { maxBytes },
+        stderr: { maxBytes },
       },
     })
     try {
