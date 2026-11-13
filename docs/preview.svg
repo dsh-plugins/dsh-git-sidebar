@@ -1,34 +1,53 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300" role="img" aria-label="A Git row in the left sidebar opening a panel with branch, status and commits">
-  <rect width="640" height="300" fill="none"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300" role="img" aria-label="A Git panel button in the right Sidebar Start page, directly below Workspace files, opening a Git tab">
+  <!--
+    Theme-neutral: no page or card fills, only strokes and mid-tone gray bars, so
+    the illustration reads the same on the light and the dark detail page. The
+    Git row is the only accent.
+  -->
 
-  <!-- Left sidebar rail with the Git row selected. -->
-  <rect x="32" y="32" width="164" height="236" rx="10" fill="#f4f6f8" stroke="#d9dee4"/>
-  <rect x="44" y="60" width="140" height="30" rx="6" fill="#e6eef7" stroke="#b9d0e6"/>
-  <g transform="translate(56 66)">
-    <path d="M9 2v4.5M9 11v4.5" fill="none" stroke="#247bbf" stroke-width="1.6" stroke-linecap="round"/>
-    <circle cx="9" cy="9" r="2.6" fill="none" stroke="#247bbf" stroke-width="1.6"/>
-    <circle cx="9" cy="9" r="1" fill="#247bbf"/>
+  <!-- The right Sidebar's Start page column. -->
+  <rect x="24" y="24" width="256" height="252" rx="10" fill="none" stroke="#9aa1a9" stroke-width="1.5"/>
+  <rect x="42" y="40" width="58" height="8" rx="4" fill="#8a9199"/>
+
+  <!-- Workspace files: first Start-page entry. -->
+  <rect x="40" y="66" width="224" height="44" rx="10" fill="none" stroke="#9aa1a9" stroke-width="1.5"/>
+  <rect x="56" y="80" width="16" height="13" rx="2.5" fill="none" stroke="#8a9199" stroke-width="1.8"/>
+  <rect x="84" y="79" width="64" height="7" rx="3.5" fill="#8a9199"/>
+  <rect x="84" y="92" width="94" height="5" rx="2.5" fill="#9aa1a9"/>
+
+  <!-- Git panel: second entry, directly below Workspace files, and the subject. -->
+  <rect x="40" y="118" width="224" height="44" rx="10" fill="#e5522f" fill-opacity="0.10" stroke="#e5522f" stroke-width="1.8"/>
+  <g transform="translate(56 129)">
+    <path d="M6 0v16" fill="none" stroke="#e5522f" stroke-width="2" stroke-linecap="round"/>
+    <path d="M15 0v5c0 3.1-2.3 5.5-5.6 5.5H6" fill="none" stroke="#e5522f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="6" cy="0" r="2.6" fill="#e5522f"/>
+    <circle cx="15" cy="0" r="2.6" fill="#e5522f"/>
+    <circle cx="6" cy="16" r="2.6" fill="#e5522f"/>
   </g>
-  <rect x="82" y="68" width="46" height="8" rx="4" fill="#4a5560"/>
-  <rect x="44" y="104" width="140" height="18" rx="5" fill="#e9edf1"/>
-  <rect x="44" y="132" width="112" height="18" rx="5" fill="#e9edf1"/>
-  <rect x="44" y="160" width="126" height="18" rx="5" fill="#e9edf1"/>
+  <rect x="84" y="130" width="44" height="7" rx="3.5" fill="#8a9199"/>
+  <rect x="84" y="143" width="112" height="5" rx="2.5" fill="#9aa1a9"/>
 
-  <!-- Panel content: branch, status, commits. -->
-  <rect x="220" y="32" width="388" height="236" rx="10" fill="#ffffff" stroke="#d9dee4"/>
-  <rect x="244" y="56" width="88" height="9" rx="4.5" fill="#2b333b"/>
+  <!-- New terminal: third entry, unchanged. -->
+  <rect x="40" y="170" width="224" height="44" rx="10" fill="none" stroke="#9aa1a9" stroke-width="1.5"/>
+  <rect x="56" y="183" width="16" height="14" rx="3" fill="#8a9199"/>
+  <rect x="84" y="183" width="56" height="7" rx="3.5" fill="#8a9199"/>
+  <rect x="84" y="196" width="86" height="5" rx="2.5" fill="#9aa1a9"/>
 
-  <rect x="244" y="82" width="340" height="34" rx="7" fill="#f4f6f8" stroke="#e0e5ea"/>
-  <circle cx="264" cy="99" r="4" fill="#247bbf"/>
-  <rect x="278" y="95" width="120" height="8" rx="4" fill="#46505a"/>
+  <!-- More tools: the last entry. -->
+  <rect x="40" y="222" width="224" height="34" rx="10" fill="none" stroke="#9aa1a9" stroke-width="1.5"/>
+  <rect x="84" y="236" width="46" height="7" rx="3.5" fill="#8a9199"/>
 
-  <rect x="244" y="128" width="340" height="54" rx="7" fill="#f4f6f8" stroke="#e0e5ea"/>
-  <rect x="262" y="142" width="150" height="7" rx="3.5" fill="#7a848d"/>
-  <rect x="262" y="158" width="98" height="7" rx="3.5" fill="#b3bcc4"/>
-  <rect x="530" y="142" width="36" height="16" rx="8" fill="#e4f1e6" stroke="#b6d6ba"/>
-  <rect x="538" y="148" width="20" height="4" rx="2" fill="#3f8a4b"/>
+  <!-- The Git tab the click opens, in the right Sidebar. -->
+  <rect x="300" y="24" width="316" height="252" rx="10" fill="none" stroke="#9aa1a9" stroke-width="1.5"/>
+  <!-- Tab chip carrying the title. -->
+  <rect x="316" y="38" width="60" height="22" rx="6" fill="none" stroke="#9aa1a9" stroke-width="1.5"/>
+  <rect x="327" y="45" width="24" height="7" rx="3.5" fill="#8a9199"/>
+  <!-- The placeholder body: a status line, then the explanation. -->
+  <rect x="316" y="78" width="150" height="7" rx="3.5" fill="#8a9199"/>
+  <rect x="316" y="96" width="268" height="5" rx="2.5" fill="#9aa1a9"/>
+  <rect x="316" y="109" width="238" height="5" rx="2.5" fill="#9aa1a9"/>
 
-  <rect x="244" y="194" width="340" height="12" rx="6" fill="#e9edf1"/>
-  <rect x="244" y="216" width="286" height="12" rx="6" fill="#e9edf1"/>
-  <rect x="244" y="238" width="316" height="12" rx="6" fill="#e9edf1"/>
+  <!-- The click that opens the tab. -->
+  <path d="M270 140h20" fill="none" stroke="#e5522f" stroke-width="2" stroke-linecap="round"/>
+  <path d="M286 134l8 6-8 6" fill="none" stroke="#e5522f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

@@ -1,1 +1,1 @@
-![Git row in the left sidebar opening a panel that will show branch, working-tree status and recent commits](preview.svg)
+![The Git panel button directly below Workspace files on the right Sidebar Start page, opening its Git tab](preview.svg)

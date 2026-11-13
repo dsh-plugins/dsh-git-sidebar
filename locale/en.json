@@ -1,11 +1,7 @@
 {
   "meta": {
-    "title": "Git sidebar",
-    "description": "Adds a Git panel to the left sidebar: one row opens a panel that will show the current repository's branch, working-tree status, and recent commits. This first version registers the sidebar row and an empty placeholder panel; repository inspection is not implemented yet."
-  },
-  "panel": {
-    "label": "Git",
-    "emptyTitle": "No repository yet",
-    "emptyBody": "This panel will show the branch, working-tree status, and recent commits of the session's workspace. Repository inspection arrives in a later version."
+    "title": "Git panel",
+    "description": "Adds a Git panel button to the right Sidebar's Start page, directly below Workspace files. Selecting it opens a Git tab in the right Sidebar. This first version draws the button and an explanatory placeholder only: it does not read the repository yet, so no branch, working-tree status, or commit list is shown. Turning the plugin off removes the button and the tab again.",
+    "detail": "docs/DETAIL.md"
   }
 }
