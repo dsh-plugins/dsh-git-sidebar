@@ -875,17 +875,36 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * @param id - the region.
      * @param size - the height it should take.
      */
+    /**
+     * The height the growing region has beyond the height the reader gave it.
+     *
+     * The change list grows into whatever the other regions leave, so part of what
+     * it draws is not its own: a drag has to spend that surplus before it can ask
+     * another region to give anything up, which is what makes the blank disappear
+     * first and the regions above start moving only after it is gone.
+     * @returns the surplus height in pixels, or zero outside a browser.
+     */
+    const slackOf = (): number => {
+      if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return 0
+      const grown = document.querySelector(`[data-git-pane='changes']`)
+      if (grown === null) return 0
+      return Math.max(0, Math.round(grown.getBoundingClientRect().height - paneSizes.changes))
+    }
+
     const sizePane = (id: PaneId, size: number): void => {
+      const slack = slackOf()
       setPaneSizes((previous) => {
         const wanted = snapPaneSize(id, clampPaneSize(size), ROW_H, HISTORY_CHROME_H)
         const delta = wanted - previous[id]
         if (delta === 0) return previous
+        // Growing spends the column's leftover room first, then borrows from the
+        // regions above in order, each down to its own floor.
+        let remaining = delta > 0 ? delta - Math.min(delta, slack) : delta
         const next = { ...previous, [id]: wanted }
-        let remaining = delta
         for (const other of aboveOf(id)) {
-          if (remaining === 0) break
+          if (remaining <= 0) break
           const room = next[other] - PANE_FLOOR[other]
-          const taken = remaining > 0 ? Math.min(remaining, room) : remaining
+          const taken = Math.min(remaining, room)
           next[other] = next[other] - taken
           remaining -= taken
         }
