@@ -52,7 +52,11 @@ export async function readHistory(
   const skip = Number.isFinite(args.skip) && args.skip > 0 ? Math.trunc(args.skip) : 0
   const git = gitIn(ctx, config, session, await topLevel(gitIn(ctx, config, session, directory, signal)), signal)
   const format = `--format=%H${FIELD}%h${FIELD}%s${FIELD}%an${FIELD}%ae${FIELD}%aI${FIELD}%P${FIELD}%D${RECORD}`
-  const log = await git('log', ['log', `--max-count=${limit + 1}`, `--skip=${skip}`, format])
+  // `--topo-order` is what the lane layout needs: date order interleaves
+  // branches, so a parent whose child has not been drawn yet opens a lane of its
+  // own and the graph fans out into one lane per commit. Topological order keeps
+  // every branch together, which is the order the graph was modelled on.
+  const log = await git('log', ['log', '--topo-order', `--max-count=${limit + 1}`, `--skip=${skip}`, format])
   const records = log.stdout.split(RECORD).filter(record => record.trim().length > 0)
   const hasMore = records.length > limit
   const commits = records.slice(0, limit).map(parseCommit)
@@ -246,8 +250,11 @@ function lines(output: string): string[] {
 
 /** Read one log record into a commit entry. */
 function parseCommit(record: string): CommitEntry {
+  // Git writes a line feed between the record separator and the next record's
+  // first field, which would otherwise become part of the object name and stop
+  // every parent from matching the lane that waits for it.
   const [sha = '', short = '', subject = '', author = '', email = '', when = '', parents = '', decorations = ''] =
-    record.split(FIELD)
+    record.replace(/^[\r\n]+/, '').split(FIELD)
   return {
     sha,
     short,

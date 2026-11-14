@@ -1,24 +1,63 @@
 /**
- * The commit history, filling the slot the P0 panel reserved.
+ * The commit history, drawn as lanes.
  *
  * One page is read when the panel first gets a snapshot, and the next page is
  * read when the list is scrolled to its foot. The sentinel at the bottom doubles
  * as the "load more" control, so a reader who never scrolls can still ask, and a
  * reader on a touch screen gets the same gesture as a wheel.
  *
+ * Every row draws its own slice of the graph: the strokes `layoutGraph` assigned
+ * to it plus the node the commit sits on. Slices stack, so the lines a row ends
+ * at its bottom edge are the lines the next row starts at its top edge, and the
+ * column reads as one drawing although no row knows its neighbours.
+ *
  * A row opens the commit's own patch as a diff tab. That address carries
  * `commit/<sha>` rather than a path, which is the one shape the diff viewer
  * reads with `commitDetail` instead of `diff`.
  */
 
-import type { CommitEntry } from '../shared.ts'
+import type { CommitEntry, CommitRef } from '../shared.ts'
 import { DIFF_TAB_KIND, commitDiffAddress } from '../shared.ts'
 import type { ReactLike, TabInfo, Translate } from './api.ts'
+import type { GraphLaneSegment, GraphRow } from './graph-model.ts'
+import { layoutGraph } from './graph-model.ts'
 import { Icon } from './icons.ts'
 import { PREFIX } from './styles.ts'
 
 /** Commits one page carries. */
 const PAGE = 20
+
+/** Width of one lane, and so the gutter's unit of measure. */
+const LANE_W = 14
+
+/** Height of one row, which is also the tall edge of one graph slice. */
+const ROW_H = 26
+
+/** Radius of the dot a commit is drawn as. */
+const NODE_R = 4
+
+/** The selector a row control is found by, for the arrow keys. */
+const ROW_SELECTOR = '[data-git-history-row]'
+
+/**
+ * The lane palette.
+ *
+ * Eight inks mixed from the shell's own tokens rather than written as hex, so
+ * both themes keep their contrast: the severities are tuned per theme already,
+ * and a mix of two of them stays inside the same gamut. Warm and cool alternate
+ * so two neighbouring lanes never look alike, since neighbours are what a reader
+ * compares while following one branch.
+ */
+const LANE_COLORS: readonly string[] = [
+  'var(--dsw-alias-brand-primary)',
+  'var(--dsw-alias-state-business-primary)',
+  'var(--dsw-alias-state-success-primary)',
+  'var(--dsw-alias-state-warn-primary)',
+  'var(--dsw-alias-state-error-primary)',
+  'color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, var(--dsw-alias-state-success-primary))',
+  'color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-state-error-primary))',
+  'color-mix(in srgb, var(--dsw-alias-state-warn-primary) 50%, var(--dsw-alias-state-business-primary))',
+]
 
 /** Props of the history section. */
 export interface HistoryProps {
@@ -32,6 +71,8 @@ export interface HistoryProps {
   /** Changes whenever the newest commit might have changed, which re-reads the first page. */
   readonly revision: string
   onToggle(): void
+  /** Re-read the panel's snapshot; absent when the panel offers no refresh. */
+  onRefresh?(): void
 }
 
 /**
@@ -90,6 +131,18 @@ export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown 
       more()
     }
 
+    const onKeyDown = (event: RowKeyEvent): void => {
+      moveRowFocus(event)
+    }
+
+    const layout = layoutGraph(commits.map(commit => ({
+      sha: commit.sha,
+      parents: commit.parents ?? [],
+    })))
+    const rows = new Map<string, GraphRow>(layout.rows.map(row => [row.sha, row] as const))
+    const lanes = Math.max(1, layout.lanes)
+    const body: BodyView = { commits, rows, lanes, hasMore, loading, failed, more, onScroll, onKeyDown }
+
     return React.createElement('section', {
       className: `${PREFIX}-history`,
       'data-git-history': '',
@@ -106,60 +159,84 @@ export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown 
       },
       Icon(React, open ? 'expand' : 'chevron', { size: 16 }),
       React.createElement('h3', { className: `${PREFIX}-group-title` }, t('history.title'))),
-      commits.length === 0 ? null : React.createElement('span', { className: `${PREFIX}-count` }, String(commits.length)),
+      commits.length === 0
+        ? null
+        : React.createElement('span', { className: `${PREFIX}-history-count` },
+          t('history.count', { count: commits.length })),
+      props.onRefresh === undefined ? null : React.createElement('button', {
+        type: 'button',
+        className: `${PREFIX}-tool ${PREFIX}-history-refresh`,
+        'data-git-history-refresh': '',
+        title: t('refresh'),
+        'aria-label': t('refresh'),
+        onClick: props.onRefresh,
+      }, Icon(React, 'refresh')),
     ),
-    open ? historyBody(React, props, commits, hasMore, loading, failed, more, onScroll) : null,
+    open ? historyBody(React, props, body) : null,
     )
   }
 }
 
-/** The scrolling list, or the sentence that replaces it. */
-function historyBody(
-  React: ReactLike,
-  props: HistoryProps,
-  commits: readonly CommitEntry[],
-  hasMore: boolean,
-  loading: boolean,
-  failed: boolean,
-  more: () => void,
-  onScroll: (event: ScrollPosition) => void,
-): unknown {
+/** What one page of the list draws, gathered so the render helpers take one object. */
+interface BodyView {
+  readonly commits: readonly CommitEntry[]
+  readonly rows: ReadonlyMap<string, GraphRow>
+  readonly lanes: number
+  readonly hasMore: boolean
+  readonly loading: boolean
+  readonly failed: boolean
+  readonly more: () => void
+  readonly onScroll: (event: ScrollPosition) => void
+  readonly onKeyDown: (event: RowKeyEvent) => void
+}
+
+/** The scrolling graph, or the sentence that replaces it. */
+function historyBody(React: ReactLike, props: HistoryProps, view: BodyView): unknown {
   const { t, tab } = props
-  if (failed) {
+  if (view.failed) {
     return React.createElement('p', { className: `${PREFIX}-history-note`, role: 'status' }, t('history.failed'))
   }
-  if (commits.length === 0) {
+  if (view.commits.length === 0) {
     return React.createElement('p', { className: `${PREFIX}-history-note`, role: 'status' },
-      loading ? t('history.loading') : t('history.empty'))
+      view.loading ? t('history.loading') : t('history.empty'))
   }
-  return React.createElement('div', { className: `${PREFIX}-history-body`, onScroll },
-    React.createElement('ul', { className: `${PREFIX}-commits` },
-      ...commits.map(commit => commitRow(React, t, tab, commit))),
-    hasMore
+  return React.createElement('div', { className: `${PREFIX}-history-body`, onScroll: view.onScroll },
+    React.createElement('div', {
+      className: `${PREFIX}-graph`,
+      'data-git-graph': '',
+      'data-lanes': String(view.lanes),
+    },
+    React.createElement('ul', { className: `${PREFIX}-commits`, onKeyDown: view.onKeyDown },
+      ...view.commits.map((commit, index) => commitRow(React, t, tab, commit, view, index)))),
+    view.hasMore
       ? React.createElement('button', {
         type: 'button',
         className: `${PREFIX}-history-more`,
         'data-git-history-more': '',
-        disabled: loading,
-        onClick: more,
-      }, loading ? t('history.loading') : t('history.more'))
+        disabled: view.loading,
+        onClick: view.more,
+      }, view.loading ? t('history.loading') : t('history.more'))
       : React.createElement('p', { className: `${PREFIX}-history-end`, 'data-git-history-end': '' },
         t('history.end')),
   )
 }
 
-/** One commit: its short name, its subject, who wrote it and when, and its refs. */
+/** One commit: its slice of the graph, its short name, its subject, refs, author, and age. */
 function commitRow(
   React: ReactLike,
   t: Translate,
   tab: TabInfo['tab'] | undefined,
   commit: CommitEntry,
+  view: BodyView,
+  index: number,
 ): unknown {
   const open = (): void => {
     if (tab === undefined) return
     tab.actions.openResource(commitDiffAddress(commit.sha), { kind: DIFF_TAB_KIND })
   }
-  return React.createElement('li', { key: commit.sha, className: `${PREFIX}-commit` },
+  const row = view.rows.get(commit.sha) ?? { sha: commit.sha, lane: 0, segments: [] }
+  const previous = view.rows.get(view.commits[index - 1]?.sha ?? '')
+  return React.createElement('li', { key: commit.sha, className: `${PREFIX}-commit-row` },
     React.createElement('button', {
       type: 'button',
       className: `${PREFIX}-commit-open`,
@@ -167,37 +244,168 @@ function commitRow(
       title: `${commit.short} ${commit.subject}`,
       onClick: open,
     },
-    React.createElement('span', { className: `${PREFIX}-sha` }, commit.short),
+    graphSlice(React, row, view.lanes, continuesFromAbove(previous, row.lane)),
+    React.createElement('span', { className: `${PREFIX}-sha`, title: commit.sha }, commit.short),
     React.createElement('span', { className: `${PREFIX}-subject` }, commit.subject),
-    commit.refs.length === 0 ? null : React.createElement('span', { className: `${PREFIX}-refs` },
-      ...commit.refs.map(ref => React.createElement('span', {
-        key: ref,
-        className: `${PREFIX}-ref`,
-        'data-ref': refKind(ref),
-      }, refName(ref)))),
+    commit.refs.length === 0
+      ? null
+      : React.createElement('span', { className: `${PREFIX}-refs` },
+        ...commit.refs.map(ref => refTag(React, ref))),
     React.createElement('span', { className: `${PREFIX}-commit-meta` },
-      React.createElement('span', { className: `${PREFIX}-author` }, commit.author),
+      React.createElement('span', {
+        className: `${PREFIX}-author`,
+        title: `${commit.author} <${commit.email}>`,
+      }, commit.author),
       React.createElement('span', { className: `${PREFIX}-when`, title: commit.when },
         relativeTime(t, commit.when))),
-    ),
-  )
+    ))
+}
+
+/** One decoration as a capsule, inked by what it names. */
+function refTag(React: ReactLike, decoration: CommitRef | string): unknown {
+  const ref = normalizeRef(decoration)
+  return React.createElement('span', {
+    key: `${ref.kind}:${ref.name}`,
+    className: `${PREFIX}-ref`,
+    'data-git-ref-kind': ref.kind,
+    // The earlier two-ink split, kept so a query written before the four kinds
+    // existed still finds the tag it was looking for.
+    'data-ref': ref.kind === 'tag' ? 'tag' : 'branch',
+    title: ref.name,
+  }, ref.name)
 }
 
 /**
- * How a decoration is drawn: a local branch and HEAD take the brand ink, while
- * a tag stays quiet. Git prefixes a tag with `tag: ` in `%D`, which is the only
- * shape that can be told apart from a branch without asking the repository.
- * @param ref - one entry of a commit's `%D` list.
- * @returns which of the two inks the label uses.
+ * Read one decoration, whichever shape it arrived in.
+ *
+ * A Host built before the typed refs sent `%D` entries as strings, and the two
+ * shapes mean the same thing: `tag: ` marks a tag, a slash marks a remote, and
+ * anything else is a local branch.
+ * @param decoration - one entry of a commit's decoration list.
+ * @returns the typed ref.
  */
-function refKind(ref: string): 'tag' | 'branch' {
-  return ref.startsWith('tag: ') ? 'tag' : 'branch'
+function normalizeRef(decoration: CommitRef | string): CommitRef {
+  if (typeof decoration !== 'string') return decoration
+  const tag = 'tag: '
+  if (decoration.startsWith(tag)) return { name: decoration.slice(tag.length), kind: 'tag' }
+  return { name: decoration, kind: decoration.includes('/') ? 'remote' : 'local' }
 }
 
-/** The text of a decoration: Git writes a tag as `tag: v1`, but the tag is `v1`. */
-function refName(ref: string): string {
-  const tag = 'tag: '
-  return ref.startsWith(tag) ? ref.slice(tag.length) : ref
+/**
+ * One row's slice of the graph.
+ *
+ * The slice is as wide as the whole graph, so every gutter lines up, and every
+ * stroke it draws fits inside `ROW_H`, which is what lets the rows stack without
+ * a seam.
+ * @param React - the loader's React.
+ * @param row - the row the layout produced.
+ * @param lanes - the graph's total width in lanes.
+ * @param above - whether a line already reaches this row's own lane from above.
+ * @returns the SVG element.
+ */
+function graphSlice(React: ReactLike, row: GraphRow, lanes: number, above: boolean): unknown {
+  const width = lanes * LANE_W
+  const shapes: unknown[] = []
+  row.segments.forEach((segment, index) => {
+    const path = segmentPath(segment, row.lane, above)
+    if (path === undefined) return
+    shapes.push(React.createElement('path', {
+      // A malformed history can name one parent twice, which would give two
+      // strokes of one row the same lane; the position keeps the keys unique.
+      key: `${index}:${segment.kind}:${segment.lane}`,
+      className: `${PREFIX}-graph-line`,
+      'data-git-graph-line': '',
+      'data-git-graph-kind': segment.kind,
+      d: path,
+      style: { stroke: laneColor(segment.lane) },
+    }))
+  })
+  shapes.push(React.createElement('circle', {
+    key: 'node',
+    className: `${PREFIX}-graph-node`,
+    'data-git-graph-node': '',
+    cx: laneCenter(row.lane),
+    cy: ROW_H / 2,
+    r: NODE_R,
+    style: { fill: laneColor(row.lane) },
+  }))
+  return React.createElement('svg', {
+    className: `${PREFIX}-graph-row`,
+    'data-git-graph-row': row.sha,
+    'data-lane': String(row.lane),
+    width,
+    height: ROW_H,
+    viewBox: `0 0 ${width} ${ROW_H}`,
+    'aria-hidden': true,
+    focusable: false,
+  }, ...shapes)
+}
+
+/**
+ * Whether a line reaches a lane from the row above it.
+ *
+ * The layout names what leaves a row, never what enters it, and the two are not
+ * symmetric: a stroke that ends at the node stops halfway down, while one that
+ * runs past the row reaches the next row's top edge. Reading the previous row
+ * is therefore what tells a row whether its own lane already has a line above
+ * it — a tip the history starts at does not, which is why its slice holds only a
+ * dot.
+ * @param previous - the row above, absent for the first row of the list.
+ * @param lane - the lane being asked about.
+ * @returns true when a stroke crossed the boundary between the two rows.
+ */
+function continuesFromAbove(previous: GraphRow | undefined, lane: number): boolean {
+  if (previous === undefined) return false
+  return previous.segments.some(segment => segment.lane === lane
+    && (segment.kind === 'through' || segment.kind === 'down' || segment.kind === 'merge-out'))
+}
+
+/**
+ * The path one stroke draws inside its row.
+ *
+ * The turns are cubics whose control points leave and enter vertically, which is
+ * what makes a branch bend rather than break at a right angle. Every stroke ends
+ * on a horizontal edge, or at the node, so a slice never needs to know where its
+ * neighbour put anything.
+ * @param segment - one stroke of the row.
+ * @param rowLane - the lane the row's own node sits in.
+ * @param above - whether a line already reaches this row's own lane from above.
+ * @returns the `d` attribute, or undefined when the stroke would be a point.
+ */
+function segmentPath(segment: GraphLaneSegment, rowLane: number, above: boolean): string | undefined {
+  const x = laneCenter(segment.lane)
+  const mid = ROW_H / 2
+  const quarter = ROW_H / 4
+  const threeQuarters = (ROW_H * 3) / 4
+  // The row's own lane may already carry a line down to the node, and drawing a
+  // second stroke from the middle would leave the top half of the row empty.
+  const start = above ? 0 : mid
+  switch (segment.kind) {
+    case 'through':
+      return `M${x} 0V${ROW_H}`
+    case 'up':
+      return above ? `M${x} 0V${mid}` : undefined
+    case 'down':
+      return `M${x} ${start}V${ROW_H}`
+    case 'merge-in':
+      return `M${x} 0C${x} ${quarter},${laneCenter(rowLane)} ${quarter},${laneCenter(rowLane)} ${mid}`
+    case 'merge-out': {
+      const y = laneCenter(rowLane)
+      if (y === x) return undefined
+      return `M${y} ${mid}C${y} ${threeQuarters},${x} ${threeQuarters},${x} ${ROW_H}`
+    }
+  }
+}
+
+/** The horizontal centre of one lane. */
+function laneCenter(lane: number): number {
+  return lane * LANE_W + LANE_W / 2
+}
+
+/** The ink of one lane, wrapped around the palette so any depth gets a colour. */
+function laneColor(lane: number): string {
+  const size = LANE_COLORS.length
+  return LANE_COLORS[((lane % size) + size) % size] ?? 'currentColor'
 }
 
 /** The share of a scrolling element's position this module reads. */
@@ -207,6 +415,43 @@ interface ScrollPosition {
     readonly clientHeight: number
     readonly scrollHeight: number
   }
+}
+
+/** The share of a key event the row list acts on. */
+interface RowKeyEvent {
+  readonly key: string
+  readonly target: unknown
+  preventDefault?(): void
+}
+
+/** The share of a DOM node the row list walks to move focus. */
+interface RowNode {
+  readonly nextElementSibling: RowNode | null
+  readonly previousElementSibling: RowNode | null
+  querySelector(selector: string): RowNode | null
+  closest(selector: string): RowNode | null
+  focus(): void
+}
+
+/**
+ * Move the focus to the row below or above the focused one.
+ *
+ * Rows are ordinary buttons, so Tab already reaches every one of them; the arrow
+ * keys only shorten the walk down a long history. Home and End are left to the
+ * browser, which knows where the list starts and stops.
+ * @param event - the key event the list saw.
+ */
+function moveRowFocus(event: RowKeyEvent): void {
+  const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0
+  if (step === 0) return
+  const target = event.target as Partial<RowNode> | null
+  if (target === null || target === undefined) return
+  if (typeof target.closest !== 'function') return
+  const row = target.closest('li')
+  if (row === null) return
+  event.preventDefault?.()
+  const neighbour = step > 0 ? row.nextElementSibling : row.previousElementSibling
+  neighbour?.querySelector(ROW_SELECTOR)?.focus()
 }
 
 /** How far in the past a commit is, in the largest unit that still says something. */

@@ -482,6 +482,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       // A commit changes the newest entry, so the list is read again after one.
       revision: snapshot?.commit ?? '',
       onToggle: () => { setHistoryOpen(!historyOpen) },
+      // The history head keeps the panel's own refresh, so a reader reading the
+      // graph can ask for a new snapshot without scrolling back up.
+      onRefresh: refresh,
     })
 
     const ConflictView = makeConflictView(React)

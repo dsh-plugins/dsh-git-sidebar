@@ -814,7 +814,7 @@ export const PANEL_STYLES = `
   cursor: default;
 }
 
-/* History */
+/* History: the header, the graph gutter, and the rows it stacks. */
 
 .gs-history {
   display: flex;
@@ -852,6 +852,31 @@ export const PANEL_STYLES = `
   height: 16px;
 }
 
+.gs-history-count {
+  flex: none;
+  min-width: 16px;
+  padding: 0 5px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: center;
+  background: color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent);
+  border-radius: var(--dsw-radius-xs);
+}
+
+.gs-history-refresh {
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  padding: 2px;
+}
+
+.gs-history-refresh svg {
+  width: 16px;
+  height: 16px;
+}
+
 .gs-history-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -859,27 +884,42 @@ export const PANEL_STYLES = `
   overscroll-behavior: contain;
 }
 
+/*
+ * The graph wraps the list so one node carries the lane count the whole column
+ * shares: every row's slice is drawn at the widest row's width, which is what
+ * keeps the gutters aligned while a reader scrolls.
+ */
+.gs-graph {
+  display: flex;
+  flex-direction: column;
+}
+
 .gs-commits {
   display: flex;
   flex-direction: column;
   margin: 0;
-  padding: 0 6px 4px;
+  padding: 2px 0 4px;
   list-style: none;
 }
 
-.gs-commit {
+.gs-commit-row {
   display: flex;
+  flex: none;
+  height: 26px;
+  padding: 0 6px 0 0;
   border-radius: var(--dsw-radius-sm);
 }
 
 .gs-commit-open {
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 2px 6px;
-  align-items: baseline;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  gap: 0 6px;
+  align-items: center;
+  box-sizing: border-box;
+  height: 26px;
   min-width: 0;
-  padding: 4px 6px;
+  padding: 0;
   color: inherit;
   font: inherit;
   text-align: start;
@@ -889,52 +929,99 @@ export const PANEL_STYLES = `
   cursor: pointer;
 }
 
+/*
+ * The slice is exactly one row tall and as wide as the graph, so the stroke that
+ * ends at its bottom edge continues as the stroke that starts at the next row's
+ * top edge. It may not be clipped: a cubic that leaves the row would show a cut.
+ */
+.gs-graph-row {
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+
+.gs-graph-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.gs-graph-node {
+  stroke: none;
+}
+
 .gs-sha {
-  grid-column: 1;
+  grid-column: 2;
   color: var(--dsw-alias-label-secondary);
   font-family: var(--dsh-font-family-code, ui-monospace, monospace);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
 }
 
 .gs-subject {
-  grid-column: 2;
+  grid-column: 3;
   min-width: 0;
   overflow: hidden;
+  color: var(--dsw-alias-label-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .gs-refs {
   display: flex;
-  grid-column: 3;
-  grid-row: 1;
-  flex-wrap: wrap;
+  grid-column: 4;
+  flex-wrap: nowrap;
   gap: 3px;
   justify-content: flex-end;
+  min-width: 0;
+  overflow: hidden;
 }
 
+/*
+ * A capsule's ink says what it names: the checked-out branch and the local
+ * branches share the brand colour, a remote-tracking branch stays quiet, and a
+ * tag takes the warning ink so it cannot be mistaken for a branch.
+ */
 .gs-ref {
   max-width: 120px;
   overflow: hidden;
   padding: 0 5px;
-  color: var(--dsw-alias-brand-primary);
   font-size: 10px;
+  font-weight: 600;
   line-height: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
   border-radius: var(--dsw-radius-xs);
 }
 
-.gs-ref[data-ref='tag'] {
+.gs-ref[data-git-ref-kind='head'] {
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent);
+}
+
+.gs-ref[data-git-ref-kind='local'] {
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
+}
+
+.gs-ref[data-git-ref-kind='remote'] {
   color: var(--dsw-alias-label-secondary);
   background: color-mix(in srgb, var(--dsw-alias-label-secondary) 14%, transparent);
 }
 
+.gs-ref[data-git-ref-kind='tag'] {
+  color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+}
+
 .gs-commit-meta {
   display: flex;
-  grid-column: 1 / -1;
+  grid-column: 5;
   gap: 6px;
+  align-items: baseline;
   min-width: 0;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
@@ -942,6 +1029,7 @@ export const PANEL_STYLES = `
 
 .gs-author {
   min-width: 0;
+  max-width: 14ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -949,7 +1037,8 @@ export const PANEL_STYLES = `
 
 .gs-when {
   flex: none;
-  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .gs-history-note,
@@ -1022,7 +1111,7 @@ export const PANEL_STYLES = `
     background: var(--dsw-alias-interactive-bg-hover);
   }
 
-  .gs-commit:hover {
+  .gs-commit-row:hover {
     background: var(--dsw-alias-interactive-bg-hover);
   }
 
