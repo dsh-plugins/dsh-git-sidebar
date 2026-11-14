@@ -25,7 +25,7 @@ import type { DiffConfig } from './diff.ts'
 import { GitFailure, GitMissingError, gitIn } from './git.ts'
 import type { GitConfig, GitRunner } from './git.ts'
 import { readBranches, readCommitDiff, readHistory, readStashes, readUpstream } from './refs.ts'
-import { NoRepository, messageOf, readIdentity, readStatus, unavailable } from './status.ts'
+import { NoRepository, messageOf, readIdentity, readStatus, topLevel, unavailable } from './status.ts'
 import { commitStaged, hasStagedChanges, write } from './write.ts'
 import type { WriteKind } from './write.ts'
 
@@ -400,10 +400,15 @@ export class GitSidebarService extends TypertRemoteService {
       return unavailable('failed', messageOf(error))
     }
   }
+  /**
+   * Resolve the repository root of one directory.
+   *
+   * A write needs the root, not a whole snapshot: reading the snapshot here
+   * would run the upstream and operation probes on every staging call for a
+   * value this method only discards.
+   */
   private async rootOf(session: HostSession, directory: string): Promise<string> {
-    const snapshot = await this.snapshot(session, directory)
-    if (snapshot.kind === 'repository' && snapshot.root !== undefined) return snapshot.root
-    throw new Error(snapshot.message ?? 'the session has no Git repository')
+    return await topLevel(gitIn(this.home, this.config, session, directory, this.signalOf()))
   }
 
   /** Resolve one Session id from the wire; an unknown id reads as no Session. */

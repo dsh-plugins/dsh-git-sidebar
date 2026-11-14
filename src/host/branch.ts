@@ -18,12 +18,17 @@ const MAX_STASH_INDEX = 999
 
 /**
  * Switch the checkout to an existing local branch.
+ *
+ * No `--` separates the name: Git reads everything after `--` as a pathspec, so
+ * `checkout -- other` restores files instead of switching branches. The name is
+ * validated against the branch list before this runs, and `checkout -q` keeps a
+ * detached name from being mistaken for a commit.
  * @param git - runner bound to the repository root.
  * @param branch - the branch to check out.
  * @returns nothing; the caller re-reads the snapshot.
  */
 export async function checkout(git: GitRunner, branch: string): Promise<void> {
-  await git('checkout', ['checkout', '--', branch])
+  await git('checkout', ['checkout', '--quiet', branch])
 }
 
 /**
@@ -35,7 +40,7 @@ export async function checkout(git: GitRunner, branch: string): Promise<void> {
  */
 export async function createBranch(git: GitRunner, name: string, from?: string): Promise<void> {
   const start = from === undefined || from.length === 0 ? [] : [from]
-  await git('checkout', ['checkout', '-b', name, ...start])
+  await git('checkout', ['checkout', '--quiet', '-b', name, ...start])
 }
 
 /**
@@ -94,7 +99,7 @@ export async function stashPush(git: GitRunner, message?: string): Promise<void>
  */
 export async function stashApply(git: GitRunner, index: number, drop: boolean): Promise<void> {
   const ref = `stash@{${index}}`
-  await git('stash', [drop ? 'pop' : 'apply', ref])
+  await git('stash', ['stash', drop ? 'pop' : 'apply', ref])
 }
 
 /**
