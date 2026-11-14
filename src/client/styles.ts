@@ -1872,6 +1872,7 @@ export const PANEL_STYLES = `
   flex: 0 0 auto;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   border-top: 0.5px solid var(--dsw-alias-border-l3);
 }
 
@@ -1880,14 +1881,17 @@ export const PANEL_STYLES = `
 }
 
 /*
- * The grab strip on the region's top edge. It is 6px of padding over the whole
+ * The grab strip on the region's top edge. It is 8px of padding over the whole
  * width rather than a visible bar, so the panel reads as three blocks of
- * content until the pointer finds it.
+ * content until the pointer finds it. It sits above the region's own content in
+ * the stacking order: a body that overflows would otherwise paint over the strip
+ * and take the pointer, which turns a resize into a scroll.
  */
 .gs-pane-resize {
+  position: relative;
+  z-index: 2;
   flex: none;
-  height: 6px;
-  margin-bottom: -3px;
+  height: 8px;
   cursor: row-resize;
   background: transparent;
 }
@@ -1949,9 +1953,20 @@ export const PANEL_STYLES = `
 }
 
 /* The commit box is a stack of controls rather than a list, so its region
-   scrolls as a whole when the reader gives it less room than they need. */
+   scrolls as a whole when the reader gives it less room than they need. The
+   bottom padding is what keeps the message field off the region's edge when the
+   box is exactly tall enough to hold it. */
 .gs-pane[data-git-pane='commit'] .gs-pane-body {
   display: block;
+  padding: 0 2px 10px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* The change list keeps the same clearance at its foot, so the last row is not
+   cut by the border of the region below it. */
+.gs-pane[data-git-pane='changes'] .gs-pane-body {
+  padding-bottom: 8px;
   overflow: auto;
   overscroll-behavior: contain;
 }

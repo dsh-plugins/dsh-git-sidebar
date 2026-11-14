@@ -34,10 +34,13 @@ export type PaneCollapsed = Record<PaneId, boolean>
 /**
  * The height each region starts at, and returns to when its handle is told Home.
  *
- * The three together fit the several hundred pixels a sidebar gives the panel
- * with the branch header above them, so a reader sees all three on opening.
+ * The commit region is the tallest of the three because its message field is a
+ * fixed block: a region shorter than the box clips the field's last line, and the
+ * reader has to scroll a region that looks like it should simply fit. The three
+ * together still leave room inside the several hundred pixels a sidebar gives the
+ * panel with the branch header above them.
  */
-export const PANE_DEFAULTS: PaneSizes = { changes: 200, commit: 160, history: 240 }
+export const PANE_DEFAULTS: PaneSizes = { changes: 200, commit: 224, history: 240 }
 
 /** Every region expanded: what a fresh panel starts with. */
 export const PANES_EXPANDED: PaneCollapsed = { changes: false, commit: false, history: false }

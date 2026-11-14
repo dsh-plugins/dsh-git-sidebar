@@ -36,7 +36,7 @@ import { makeFileRow, type RowAction } from './row.ts'
 import { makeStashGroup, type StashProps } from './stash-group.ts'
 import { PREFIX } from './styles.ts'
 import {
-  gitPane, PANE_DEFAULTS, PANES_EXPANDED, paneKeySize, startPaneDrag,
+  clampPaneSize, gitPane, PANE_DEFAULTS, PANES_EXPANDED, PANE_MIN, paneKeySize, startPaneDrag,
   type PaneCollapsed, type PaneId, type PaneKeyEvent, type PanePointerEvent, type PaneSizes,
 } from './panes.ts'
 import { conflictNotice, makeConflictView } from './conflict-view.ts'
@@ -849,15 +849,35 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const historyOpen = !collapsedPanes.history
 
     /**
-     * Set one region's height, expanding it when the gesture found it folded.
+     * The region above one region, which lends it the room its handle takes.
      *
-     * A drag or an arrow key is the reader asking to see the region, so a folded
-     * one opens at the height the gesture produced rather than swallowing it.
+     * The three regions fill the body, so one of them cannot grow without another
+     * giving way: without that trade the column simply gets taller than the body
+     * and scrolls, and a drag looks like the content sliding rather than a region
+     * changing size.
+     * @param id - the region whose handle moved.
+     * @returns the region above it, or undefined for the topmost one.
+     */
+    const paneAbove = (id: PaneId): PaneId | undefined =>
+      id === 'commit' ? 'changes' : id === 'history' ? 'commit' : undefined
+
+    /**
+     * Set one region's height, taking the difference from the region above it.
      * @param id - the region.
      * @param size - the height it should take.
      */
     const sizePane = (id: PaneId, size: number): void => {
-      setPaneSizes(previous => ({ ...previous, [id]: size }))
+      setPaneSizes((previous) => {
+        const above = paneAbove(id)
+        const wanted = clampPaneSize(size)
+        if (above === undefined) return { ...previous, [id]: wanted }
+        // What the pair can give: the region cannot shrink past its floor, and the
+        // one above cannot grow past the height that is left for it.
+        const least = PANE_MIN - previous[id]
+        const most = previous[above] - PANE_MIN
+        const taken = Math.max(least, Math.min(wanted - previous[id], most))
+        return { ...previous, [id]: previous[id] + taken, [above]: previous[above] - taken }
+      })
       setCollapsedPanes(previous => (previous[id] ? { ...previous, [id]: false } : previous))
     }
 
@@ -1292,9 +1312,13 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       React.createElement(Progress, { active: loading || refreshing }),
       React.createElement(BranchHeader, headerProps()),
       notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
-      stateBlock(React, t('state.clean.title'), t('state.clean.body')),
-      React.createElement(StashGroup, stashProps()),
+      // The changes region keeps its head even when the tree is clean: the reader
+      // still resizes and folds it, and a column that silently loses one of its
+      // three regions would move the other two under the pointer.
       panes(
+        pane('changes', t('group.changes'), React.createElement('div', null,
+          stateBlock(React, t('state.clean.title'), t('state.clean.body')),
+          React.createElement(StashGroup, stashProps()))),
         pane('commit', t('pane.commit'), commitBox(true)),
         pane('history', t('history.title'), historyElement()),
       ),
