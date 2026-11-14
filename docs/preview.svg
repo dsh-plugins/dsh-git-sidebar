@@ -16,13 +16,13 @@
   <rect x="84" y="92" width="94" height="5" rx="2.5" fill="#9aa1a9"/>
 
   <!-- Git panel: second entry, directly below Workspace files, and the subject. -->
-  <rect x="40" y="118" width="224" height="44" rx="10" fill="#e5522f" fill-opacity="0.10" stroke="#e5522f" stroke-width="1.8"/>
-  <g transform="translate(56 129)">
-    <path d="M6 0v16" fill="none" stroke="#e5522f" stroke-width="2" stroke-linecap="round"/>
-    <path d="M15 0v5c0 3.1-2.3 5.5-5.6 5.5H6" fill="none" stroke="#e5522f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="6" cy="0" r="2.6" fill="#e5522f"/>
-    <circle cx="15" cy="0" r="2.6" fill="#e5522f"/>
-    <circle cx="6" cy="16" r="2.6" fill="#e5522f"/>
+  <rect x="40" y="118" width="224" height="44" rx="10" fill="#4D6BFE" fill-opacity="0.10" stroke="#4D6BFE" stroke-width="1.8"/>
+  <g transform="translate(50.7 122.8) scale(0.9)">
+    <path d="M13 10V26" fill="none" stroke="url(#git-row-ink)" stroke-width="3.4" stroke-linecap="round"/>
+    <path d="M23 10V14.6C23 17.5 20.9 19.8 17.8 19.8H14.7" fill="none" stroke="url(#git-row-branch)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="13" cy="10" r="3.8" fill="url(#git-row-ink)"/>
+    <circle cx="23" cy="10" r="3.8" fill="url(#git-row-side)"/>
+    <circle cx="13" cy="26" r="3.8" fill="url(#git-row-ink)"/>
   </g>
   <rect x="84" y="130" width="44" height="7" rx="3.5" fill="#8a9199"/>
   <rect x="84" y="143" width="112" height="5" rx="2.5" fill="#9aa1a9"/>
@@ -48,6 +48,22 @@
   <rect x="316" y="109" width="238" height="5" rx="2.5" fill="#9aa1a9"/>
 
   <!-- The click that opens the tab. -->
-  <path d="M270 140h20" fill="none" stroke="#e5522f" stroke-width="2" stroke-linecap="round"/>
-  <path d="M286 134l8 6-8 6" fill="none" stroke="#e5522f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M270 140h20" fill="none" stroke="#4D6BFE" stroke-width="2" stroke-linecap="round"/>
+  <path d="M286 134l8 6-8 6" fill="none" stroke="#4D6BFE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- The Git row's mark, on the same 36-unit grid as the plugin icon. -->
+  <defs>
+    <linearGradient id="git-row-ink" x1="13" y1="6.2" x2="13" y2="29.8" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#69B9FF"/>
+      <stop offset="1" stop-color="#324DE2"/>
+    </linearGradient>
+    <linearGradient id="git-row-branch" x1="23" y1="10" x2="14.7" y2="19.8" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#51CFDB"/>
+      <stop offset="1" stop-color="#497BEE"/>
+    </linearGradient>
+    <linearGradient id="git-row-side" x1="19.8" y1="6.2" x2="26.2" y2="13.8" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#51CFDB"/>
+      <stop offset="1" stop-color="#108792"/>
+    </linearGradient>
+  </defs>
 </svg>

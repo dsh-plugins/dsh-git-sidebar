@@ -101,7 +101,7 @@ $env:DSH_PERMISSION_MODE = 'danger-full-access'
 
 | 资源 | 路径 | 说明 |
 | --- | --- | --- |
-| 图标 | `icon.svg`（导出 `./icon`，`package.json` 亦有 `icon` 字段） | 36×36 视图框的分支图形，`#e5522f`；与面板内的 guide 图标几何一致，由 `run/parity.mjs` 守护 |
+| 图标 | `icon.svg`（导出 `./icon`，`package.json` 亦有 `icon` 字段） | 36×36 视图框的分支图形，官方插件蓝青渐变（主线 `#69B9FF`→`#324DE2`，侧枝 `#51CFDB`→`#108792`）；与面板内的 guide 图标几何一致，由 `run/parity.mjs` 守护 |
 | 英文标题/描述 | `locale/en.json` | `meta.title`、`meta.description`、`meta.detail` |
 | 中文标题/描述 | `locale/zh.json` | 同上 |
 | 详情插图 | `docs/preview.svg` | 640×300，主题中性 |

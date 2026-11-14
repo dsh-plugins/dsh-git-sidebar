@@ -97,45 +97,77 @@ export function Icon(React: IconReactSurface, name: IconName, props: { size?: nu
 }
 
 /**
+ * One gradient of the Start-page mark, on the mark's own 36-unit coordinates.
+ * @param React - the loader's React.
+ * @param id - gradient id, referenced by the shape that paints with it.
+ * @param from - top or left stop colour.
+ * @param to - bottom or right stop colour.
+ * @param axis - start and end points of the ramp.
+ * @returns the `linearGradient` element.
+ */
+function markGradient(
+  React: IconReactSurface,
+  id: string,
+  from: string,
+  to: string,
+  axis: readonly [number, number, number, number],
+): unknown {
+  const [x1, y1, x2, y2] = axis
+  return React.createElement('linearGradient', { id, x1, y1, x2, y2, gradientUnits: 'userSpaceOnUse' },
+    React.createElement('stop', { stopColor: from }),
+    React.createElement('stop', { offset: 1, stopColor: to }))
+}
+
+/**
  * Draw the plugin's Start-page mark: a two-line Git fork with commit nodes.
  *
- * Geometry matches `icon.svg`, which Plugin Manager shows in its own rows, so
- * the Start-page button and the plugin inventory draw the same mark. The ink
- * spans roughly 16×23 of the 36-unit box; at the Start page's 26px it lands
- * near the optical size of the neighbouring folder and terminal glyphs.
+ * Geometry and colours match `icon.svg`, which Plugin Manager shows in its own
+ * rows, so the Start-page button and the plugin inventory draw the same mark.
+ * The main line's two commits sit on the light-to-deep brand blue, and the
+ * branch that merges into it carries the teal accent. The ink spans roughly
+ * 18×24 of the 36-unit box; at the Start page's 26px it lands near the optical
+ * size of the neighbouring folder and terminal glyphs.
  * @param React - the loader's React.
  * @returns the Start-page icon component.
  */
 export function GitGuideIcon(React: ReactLike): unknown {
   return function GitGuideArtwork(props: { size?: number; className?: string }): unknown {
     const size = props.size ?? 26
-    const ink = '#e5522f'
+    // One gradient id per rendered artwork: the guide can mount in more than
+    // one pane, and a shared id would blank the copies still mounted once the
+    // first one unmounts.
+    const unique = React.useId?.().replaceAll(':', '')
+    const uid = unique === undefined ? 'git-sidebar-guide' : `git-sidebar-guide-${unique}`
+    const ink = `url(#${uid}-ink)`
     return React.createElement('svg', {
       viewBox: '0 0 36 36',
       width: size,
       height: size,
       className: props.className,
+      fill: 'none',
       'aria-hidden': true,
       style: { display: 'block' },
     },
     React.createElement('path', {
-      d: 'M13 9.7v16.6',
+      d: 'M13 10V26',
       stroke: ink,
-      strokeWidth: 2.7,
+      strokeWidth: 3.4,
       strokeLinecap: 'round',
-      fill: 'none',
     }),
     React.createElement('path', {
-      d: 'M23 9.7v5.4c0 3.3-2.5 5.8-6 5.8H13',
-      stroke: ink,
-      strokeWidth: 2.7,
+      d: 'M23 10V14.6C23 17.5 20.9 19.8 17.8 19.8H14.7',
+      stroke: `url(#${uid}-branch)`,
+      strokeWidth: 3.4,
       strokeLinecap: 'round',
       strokeLinejoin: 'round',
-      fill: 'none',
     }),
-    React.createElement('circle', { cx: 13, cy: 9.7, r: 2.7, fill: ink }),
-    React.createElement('circle', { cx: 23, cy: 9.7, r: 2.7, fill: ink }),
-    React.createElement('circle', { cx: 13, cy: 26.3, r: 2.7, fill: ink }),
+    React.createElement('circle', { cx: 13, cy: 10, r: 3.8, fill: ink }),
+    React.createElement('circle', { cx: 23, cy: 10, r: 3.8, fill: `url(#${uid}-side)` }),
+    React.createElement('circle', { cx: 13, cy: 26, r: 3.8, fill: ink }),
+    React.createElement('defs', null,
+      markGradient(React, `${uid}-ink`, '#69B9FF', '#324DE2', [13, 6.2, 13, 29.8]),
+      markGradient(React, `${uid}-branch`, '#51CFDB', '#497BEE', [23, 10, 14.7, 19.8]),
+      markGradient(React, `${uid}-side`, '#51CFDB', '#108792', [19.8, 6.2, 26.2, 13.8])),
     )
   }
 }

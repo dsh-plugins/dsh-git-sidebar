@@ -24,6 +24,8 @@ export type Translate = (key: string, params?: Record<string, unknown>) => strin
 /** The hooks this bundle calls; the loader's React is cast to it once. */
 export interface ReactLike {
   createElement(type: unknown, props?: unknown, ...children: unknown[]): unknown
+  /** Present on the loader's React; the guide artwork keys its gradient ids by it. */
+  useId?(): string
   useState<T>(initial: T): [T, (value: T | ((previous: T) => T)) => void]
   useEffect(effect: () => (() => void) | void, dependencies: readonly unknown[]): void
   useCallback<T>(callback: T, dependencies: readonly unknown[]): T

@@ -1,7 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" role="img" aria-label="Git branch">
-  <path d="M13 9.7v16.6" fill="none" stroke="#e5522f" stroke-width="2.7" stroke-linecap="round"/>
-  <path d="M23 9.7v5.4c0 3.3-2.5 5.8-6 5.8H13" fill="none" stroke="#e5522f" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="13" cy="9.7" r="2.7" fill="#e5522f"/>
-  <circle cx="23" cy="9.7" r="2.7" fill="#e5522f"/>
-  <circle cx="13" cy="26.3" r="2.7" fill="#e5522f"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none" role="img" aria-label="Git branch">
+  <path d="M13 10V26" stroke="url(#git-sidebar-ink)" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M23 10V14.6C23 17.5 20.9 19.8 17.8 19.8H14.7" fill="none" stroke="url(#git-sidebar-branch)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="13" cy="10" r="3.8" fill="url(#git-sidebar-ink)"/>
+  <circle cx="23" cy="10" r="3.8" fill="url(#git-sidebar-side)"/>
+  <circle cx="13" cy="26" r="3.8" fill="url(#git-sidebar-ink)"/>
+  <defs>
+    <linearGradient id="git-sidebar-ink" x1="13" y1="6.2" x2="13" y2="29.8" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#69B9FF"/>
+      <stop offset="1" stop-color="#324DE2"/>
+    </linearGradient>
+    <linearGradient id="git-sidebar-branch" x1="23" y1="10" x2="14.7" y2="19.8" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#51CFDB"/>
+      <stop offset="1" stop-color="#497BEE"/>
+    </linearGradient>
+    <linearGradient id="git-sidebar-side" x1="19.8" y1="6.2" x2="26.2" y2="13.8" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#51CFDB"/>
+      <stop offset="1" stop-color="#108792"/>
+    </linearGradient>
+  </defs>
 </svg>
