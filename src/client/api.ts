@@ -79,6 +79,16 @@ export interface SlotRegistration {
   readonly locale?: string
 }
 
+/** The share of the right Sidebar's navigation controller a tool row calls. */
+export interface SidebarRightService {
+  /**
+   * Open a page tab, or focus the one already showing it.
+   * @param kind - the tab type's kind, such as the panel's.
+   * @param options - placement; the panel type reads none.
+   */
+  openTab(kind: string, options?: { readonly params?: unknown }): void
+}
+
 /** Restricted Cordis context face of a dynamic client bundle. */
 export interface GitClientContext {
   effect(setup: () => (() => void) | void, label?: string): () => void
@@ -89,6 +99,8 @@ export interface GitClientContext {
   sidebarRightTabs: {
     register(definition: TabDefinition): () => void
   }
+  /** The navigation controller that puts a tab on screen. */
+  sidebarRight: SidebarRightService
   slots: {
     inject(key: string, callback: () => (() => void) | Iterable<() => void>): () => void
     register(options: SlotRegistration, component: unknown): () => void

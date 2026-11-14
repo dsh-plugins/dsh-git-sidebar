@@ -125,6 +125,45 @@ export type SelectOutcome =
   | { readonly ok: true; readonly snapshot: StatusSnapshot }
   | { readonly ok: false; readonly problem: SelectProblem; readonly message: string }
 
+/** One checkout as the agent tools report it. */
+export interface RepositoryToolEntry extends RepositoryEntry {
+  /** Whether the panel is reading this checkout. */
+  readonly current: boolean
+}
+
+/** What the repository listing tool returns. */
+export interface RepositoryToolList {
+  /** The Session's working directory, which is depth 0 of the scan. */
+  readonly scanRoot: string
+  readonly depth: number
+  readonly entries: readonly RepositoryToolEntry[]
+  readonly truncated: boolean
+  readonly warnings: readonly string[]
+}
+
+/** What the open-repository tool returns once a checkout is selected. */
+export interface OpenRepositoryResult {
+  /** Absolute top level of the selected checkout. */
+  readonly root: string
+  /** Path from the Session directory; `.` when the working directory is the checkout. */
+  readonly relative: string
+  /** Checked-out branch; empty on a detached HEAD. */
+  readonly branch: string
+  /** True when HEAD points at a commit instead of a branch. */
+  readonly detached: boolean
+  readonly staged: number
+  readonly unstaged: number
+  readonly conflicts: number
+}
+
+/** Model-facing names of the tools this bundle registers. */
+export const GIT_TOOL_NAMES = {
+  /** List the checkouts the panel's scan finds. */
+  list: 'git_repositories',
+  /** Select one checkout and present its panel. */
+  open: 'git_open_repository',
+} as const
+
 /** One line inside a hunk. */
 export interface DiffLine {
   readonly kind: 'context' | 'added' | 'removed'

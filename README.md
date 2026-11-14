@@ -12,6 +12,7 @@ DeepSeek Harness 的 Git 面板插件（`@dsh-plugin/dsh-git-sidebar`，仓库�
 | 当前分支 / detached HEAD 短 SHA / 仓库路径 | 已实现 |
 | 子目录多仓库：顶部仓库下拉切换，识别 submodule / linked worktree | 已实现 |
 | 扫描深度可配（默认 2，工作目录为 0），正则黑名单含 `build` / `node_modules` / `.gradle` 等内置规则 | 已实现 |
+| 给 agent 的两个工具：`git_repositories` 列出扫描到的仓库、`git_open_repository` 打开指定仓库的面板 | 已实现 |
 | 上游 `↑n ↓m`，分支同步时隐藏 | 已实现 |
 | 暂存更改 / 更改两组，逐文件状态字母 `A M D R U` | 已实现 |
 | 单文件暂存 / 取消暂存 / 放弃 / 查看差异 | 已实现 |
@@ -37,6 +38,7 @@ DeepSeek Harness 的 Git 面板插件（`@dsh-plugin/dsh-git-sidebar`，仓库�
 - 顶部分支名可点击，展开分支选择器：列出本地分支、切换、新建、删除（未合并会二次确认）；`⋯` 菜单提供 fetch / pull / push、储藏当前改动、以及合并某个分支到当前分支。`pull` 只做快进，`push` 与 `pull` 都会先确认。
 - 分支名右侧是**仓库下拉**：点开会扫描会话工作目录的子目录（默认两层），列出其中的 checkout。`.git` 是文件的 checkout 会标成 `submodule` 或 `worktree`；选中后整个面板（更改、历史、分支、储藏、diff）都切到那个仓库。选过之后菜单底部出现「回到工作目录」。
 - 扫描默认跳过 `node_modules`、`build`、`dist`、`.gradle`、`.venv` 等目录；可用配置追加或关闭这些规则。
+- 面板也能被 agent 打开：`git_repositories` 返回当前扫描到的仓库（root、相对路径、`submodule` / `worktree` 类型、哪个是当前），`git_open_repository` 接受绝对路径、相对路径或 `.`，选中后**自动把面板打开给用户看**。会话里这两次调用各自有一行工具卡片，卡片上的「打开 Git 面板」可以随时把面板叫回来。
 - 改动按「暂存更改」「更改」分组；把鼠标移到文件行上会显示操作按钮，键盘聚焦或触屏上常驻显示。
 - 点文件行本身在右侧栏打开该文件的 diff，可与其他标签页并存；点历史里的提交打开该提交自己的 diff。
 - 提交框可用 `Ctrl+Enter`（macOS 上 `Cmd+Enter`）提交。暂存区为空时按钮变成「暂存全部并提交」；勾选「改写上次提交」可修改上一条提交信息（工作区干净时也能用）。
@@ -115,7 +117,7 @@ $env:DSH_PERMISSION_MODE = 'danger-full-access'
 
 测试脚本：`test.mjs`（按钮位置）、`git-test.mjs`（P0 主流程）、`diff-test.mjs`（差异视图）、`p1-test.mjs`（分支/储藏）、`graph-model.test.mjs`（泳道布局纯函数，不需要浏览器）、`repo-scan.test.mjs`（子目录扫描、深度、黑名单、submodule/worktree 判定，不需要浏览器）、`repo-test.mjs`（浏览器：仓库下拉扫描、切换、回到工作目录）、`history-test.mjs`（历史泳道图）、`history-dark.mjs`（深色泳道配色）、`hunk-test.mjs`（hunk 级暂存）、`branch-test.mjs`（分支删除与合并）、`sync-test.mjs`（对本地裸仓库的 fetch/pull/push）、`conflict-test.mjs`（冲突逐区解决与中止）、`amend-test.mjs`（暂存全部并提交、改写上次提交）、`dark.mjs`（深色）、`contract.mjs`（契约漂移）、`locale-parity.mjs`（中英键一致）、`parity.mjs`（两个图标是否一致）、`pluginrow.mjs`（插件管理行图标）、`detail.mjs`（详情页插图）。截图输出到 `run/shots/`。
 
-`repo-test.mjs` 会在 `run/` 下造 `demo-app`、`demo-lib` 与 linked worktree `demo-wt` 作为扫描对象；`run/` 已 gitignore，删掉即可重建。
+`repo-test.mjs` 会在 `run/` 下造 `demo-app`、`demo-lib` 与 linked worktree `demo-wt` 作为扫描对象；`run/` 已 gitignore，删掉即可重建。`tools-smoke.mjs` 覆盖两个 agent 工具的定义、仓库名解析（绝对路径 / 相对路径 / `.`）、未知仓库的报错与选择调用。
 
 ## 插件元数据
 

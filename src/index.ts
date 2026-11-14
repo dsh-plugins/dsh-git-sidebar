@@ -13,6 +13,7 @@
 import z from '@deepseek-ai/schemastery'
 import type { HostContext } from './host/context.ts'
 import { GitSidebarService, type ServiceConfig } from './host/service.ts'
+import { createGitTools } from './host/tools.ts'
 
 /** Stable Cordis plugin name. */
 export const name = '@dsh-plugin/dsh-git-sidebar'
@@ -111,11 +112,15 @@ function serviceConfig(config: GitSidebarConfig): ServiceConfig {
 }
 
 /**
- * Register the Remote service.
+ * Register the Remote service and the agent tools.
  *
  * The service is constructed directly rather than mounted as a class plugin,
  * so a misconfigured registration fails this plugin's activation instead of
  * disappearing into a parked child fiber.
+ *
+ * The tools are registered through `ctx.inject` rather than this plugin's
+ * required `inject` list: a profile without a tool registry still gets the
+ * panel, and one with a registry gets the tools once it is mounted.
  * @param ctx - owning Cordis context.
  * @param config - resolved plugin configuration.
  */
@@ -124,5 +129,28 @@ export function apply(ctx: HostContext, config: GitSidebarConfig): void {
   if (typeof resolved.gitCommand !== 'string' || resolved.gitCommand.trim().length === 0) {
     throw new Error('git-sidebar: gitCommand must not be empty')
   }
-  new GitSidebarService(ctx, serviceConfig(resolved))
+  const service = new GitSidebarService(ctx, serviceConfig(resolved))
+  registerTools(ctx, service)
+}
+
+/**
+ * Add the repository tools to whatever registry this profile mounts.
+ * @param ctx - owning Cordis context.
+ * @param service - the service whose scan and selection the tools reuse.
+ */
+function registerTools(ctx: HostContext, service: GitSidebarService): void {
+  if (ctx.inject === undefined) return
+  ctx.inject(['tools'], (scoped) => {
+    const tools = scoped.tools
+    if (tools === undefined) return
+    for (const definition of createGitTools(service)) {
+      try {
+        tools.register(definition)
+      } catch (error) {
+        // A tool name another plugin already claimed must not disable the panel:
+        // the other tools stay useful, and the failure is worth one line.
+        console.error(`git-sidebar: could not register ${definition.name}: ${String(error)}`)
+      }
+    }
+  })
 }

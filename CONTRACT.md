@@ -83,6 +83,27 @@ B 在 `src/client.ts` 里 import 这两个并按 `ctx.slots.register` 注册，�
 `REMOTE_METHODS` 与 descriptor、`src/host/service.ts` 的 `async` 方法；另外
 `run/contract.mjs` 的 `EXPECTED_ARGS` 也要登记，否则该检查会 FAIL。
 
+## Agent 工具（不是 Remote 方法）
+
+两个工具在 `src/host/tools.ts`，由 `src/index.ts` 用 `ctx.inject(['tools'], …)` 注册
+——**不要**加进 `export const inject`，否则没有工具注册表的 profile 会连面板一起停用。
+
+| 工具 | 参数 | 返回 |
+| --- | --- | --- |
+| `git_repositories` | 无 | `scanRoot`、`depth`、`entries[]`（`root`/`relative`/`name`/`kind`/`current`）、`truncated`、`warnings` |
+| `git_open_repository` | `repository`：绝对 root、相对路径或 `.` | `root`、`relative`、`branch`、`detached`、三个改动计数 |
+
+- 两者都从 `exec.agent?.id` 取 sessionId（**`Agent.id` 就是 `SessionId`**），再调
+  `GitSidebarService.repositories()` / `selectRepository()`——与面板下拉走同一条路径，不复制扫描与校验。
+- 定义是手写同形对象（`name`/`description`/`parameters`/`output{schema,render}`/`execute`），
+  不 import `@deepseek-ai/dsh-tools`。**注意注册表会校验 output schema**：只支持单一 `type`，
+  `type: ['string','null']` 会被拒；需要「可能为空」时用空串 + 单独的 boolean。
+- UI：Host 侧没有任何「给客户端开 tab」的通道（可转发事件是 `dsh-api-remotes` 的白名单，第三方加不了），
+  所以打开面板靠**工具卡片**——client 半用 `ctx.slots.register({ name: 'tool.call.toolview', key: '<wire name>' })`
+  注册自己的行，行在 `phase === 'result'` 时调 `ctx.sidebarRight.openTab(PANEL_TAB_KIND)`，
+  并按 `callId` 去重，避免重渲染/重放重复抢焦点。打开前 `invalidateAll(panelCache)`，
+  否则面板会画出上一个 checkout 的快照。
+
 ## 宿主侧要点
 
 - 服务 `extends TypertRemoteService`，`super(ctx, 'gitSidebar')`。

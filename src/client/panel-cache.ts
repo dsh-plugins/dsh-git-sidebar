@@ -60,6 +60,21 @@ export function invalidateSession(cache: PanelCache, sessionId: string): void {
 }
 
 /**
+ * Forget every Session's entries.
+ *
+ * The agent tools change the checkout a Session reads without the panel seeing a
+ * write, so the next mount must not paint a snapshot that belongs to the
+ * repository the reader just left. Clearing all Sessions is enough and needs no
+ * Session identity, which a tool card does not carry.
+ * @param cache - the cache to clear.
+ */
+export function invalidateAll(cache: PanelCache): void {
+  cache.status.clear()
+  cache.stashes.clear()
+  cache.history.clear()
+}
+
+/**
  * Replace what is cached for one Session with a page that has just arrived.
  * @param cache - the cache to update.
  * @param sessionId - the Session the page belongs to.

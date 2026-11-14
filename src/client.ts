@@ -19,14 +19,15 @@
  */
 
 import type { CommitDetailArgs, DiffArgs, DiffPayload } from './shared.ts'
-import { commitDiffAddress, DIFF_TAB_ID, diffAddress, PANEL_TAB_ID, PANEL_TAB_KIND } from './shared.ts'
+import { commitDiffAddress, DIFF_TAB_ID, diffAddress, GIT_TOOL_NAMES, PANEL_TAB_ID, PANEL_TAB_KIND } from './shared.ts'
 import {
   mountGitRemote, resolveZod, type GitClientContext, type GitRemoteHandle, type ReactLike, type TabBodyProps,
 } from './client/api.ts'
 import { DIFF_DICTS, DIFF_LOCALE_NS, DIFF_STYLES, DIFF_TAB_DEFINITION, makeDiffBody } from './client/diff-tab.ts'
 import { GitGuideIcon } from './client/icons.ts'
 import { makePanel } from './client/panel.ts'
-import { createPanelCache } from './client/panel-cache.ts'
+import { createPanelCache, invalidateAll } from './client/panel-cache.ts'
+import { makeGitToolRow } from './client/tool-card.ts'
 import { clearDiffCache, readDiffCache, writeDiffCache } from './client/diff-cache.ts'
 import { PANEL_STYLES } from './client/styles.ts'
 
@@ -73,6 +74,10 @@ const DICTS: Record<string, Record<string, string>> = {
     'repo.reset': '回到工作目录',
     'repo.failed': '扫描仓库失败',
     'notice.switchFailed': '切换仓库失败',
+    'gitTool.open.title': '在 Git 面板中打开仓库',
+    'gitTool.list.title': '扫描到的 Git 仓库',
+    'gitTool.open.action': '打开 Git 面板',
+    'gitTool.running': '正在处理…',
     'notice.deleteFailed': '删除分支失败',
     'notice.mergeFailed': '合并失败',
     'dialog.deleteBranch': '删除分支 {branch}？',
@@ -239,6 +244,10 @@ const DICTS: Record<string, Record<string, string>> = {
     'repo.reset': 'Back to the working directory',
     'repo.failed': 'Could not scan for repositories',
     'notice.switchFailed': 'Could not switch the repository',
+    'gitTool.open.title': 'Repository opened in the Git panel',
+    'gitTool.list.title': 'Git repositories found',
+    'gitTool.open.action': 'Open the Git panel',
+    'gitTool.running': 'Working…',
     'notice.deleteFailed': 'Could not delete the branch',
     'notice.mergeFailed': 'Could not merge the branch',
     'dialog.deleteBranch': 'Delete the branch {branch}?',
@@ -456,7 +465,7 @@ loader.load({
     const GuideIcon = GitGuideIcon(React)
 
     return {
-      inject: ['remote', 'slots', 'locale', 'sidebarRightTabs'],
+      inject: ['remote', 'slots', 'locale', 'sidebarRightTabs', 'sidebarRight'],
       apply(ctx: GitClientContext) {
         ctx.effect(() => ctx.locale.register(NS, DICTS), 'git-sidebar: dictionaries')
         ctx.effect(() => ctx.locale.register(DIFF_LOCALE_NS, DIFF_DICTS), 'git-sidebar: diff dictionaries')
@@ -527,6 +536,28 @@ loader.load({
           key: DIFF_TAB_ID,
           locale: DIFF_LOCALE_NS,
         }, DiffBody)), 'git-sidebar: diff body')
+
+        // The tools' own conversation rows. A Host tool cannot open a tab by
+        // itself, so the row for the opening tool is where the panel reaches the
+        // screen: it clears what belongs to the checkout the reader left, then
+        // asks the navigation controller for the panel's tab.
+        const openPanel = (): void => {
+          invalidateAll(panelCache)
+          ctx.sidebarRight.openTab(PANEL_TAB_KIND)
+        }
+        const toolDeps = { t, openPanel }
+        const OpenRow = makeGitToolRow(React, toolDeps, 'open')
+        const ListRow = makeGitToolRow(React, toolDeps, 'list')
+        ctx.effect(() => ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
+          name: 'tool.call.toolview',
+          key: GIT_TOOL_NAMES.open,
+          locale: NS,
+        }, OpenRow)), 'git-sidebar: open tool row')
+        ctx.effect(() => ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
+          name: 'tool.call.toolview',
+          key: GIT_TOOL_NAMES.list,
+          locale: NS,
+        }, ListRow)), 'git-sidebar: list tool row')
       },
     }
   },

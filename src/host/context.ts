@@ -126,6 +126,17 @@ export interface SessionStoreService {
   get(id: string): HostSession | undefined
 }
 
+/** The share of the tool registry this bundle registers into. */
+export interface ToolsService {
+  /**
+   * Add one tool definition.
+   * @param definition - name, description, schema, renderer, and body.
+   * @param options - activation options the registry understands, such as `when`.
+   * @returns the disposer that withdraws the tool.
+   */
+  register(definition: object, options?: object): () => void
+}
+
 /** The Cordis context face the host half consumes. */
 export interface HostContext {
   readonly subprocess: SubprocessService
@@ -133,6 +144,19 @@ export interface HostContext {
   readonly sandboxPolicy: SandboxPolicyService
   readonly workingDirectory: WorkingDirectoryService
   readonly sessions: SessionStoreService
+  /**
+   * Run a registration against services that may not exist in every profile.
+   *
+   * The panel must keep working where no tool registry is mounted, so the tools
+   * are added through this rather than through the plugin's required `inject`
+   * list; the callback's registrations live as long as they are held there.
+   */
+  readonly inject?: (deps: readonly string[], callback: (scoped: ToolScope) => void) => void
   /** The Remote call this context was derived for; absent outside a call. */
   readonly invocation?: { readonly signal: AbortSignal } | undefined
+}
+
+/** The services a tool registration callback receives. */
+export interface ToolScope {
+  readonly tools?: ToolsService | undefined
 }

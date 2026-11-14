@@ -199,6 +199,72 @@ export const PANEL_STYLES = `
   border-radius: var(--dsw-radius-xs);
 }
 
+/* The agent tools' conversation rows: one line of title and summary, plus the
+   control that puts the panel back on screen. */
+.gs-tool-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+}
+
+.gs-tool-row > svg {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.gs-tool-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gs-tool-title {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-tool-summary {
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-tool-open {
+  flex: none;
+  padding: 3px 8px;
+  color: var(--dsw-alias-brand-primary);
+  font: inherit;
+  font-size: 11px;
+  background: transparent;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+}
+
+.gs-tool-open:hover:not(:disabled) {
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.gs-tool-open:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.gs-tool-open:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
 .gs-tool {
   display: inline-flex;
   flex: none;
