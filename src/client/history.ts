@@ -38,7 +38,16 @@ const MENU_W = 190
 const LANE_W = 14
 
 /** Height of one row, which is also the tall edge of one graph slice. */
-const ROW_H = 26
+export const ROW_H = 26
+
+/**
+ * Everything the history region spends above its scrolling list.
+ *
+ * The region's own grab strip and title, plus the list's count-and-refresh head.
+ * A region sized without it lands the scroller on a height that is not a whole
+ * number of rows, which is what cuts the last row in half.
+ */
+export const HISTORY_CHROME_H = 75
 
 /** Radius of the node a commit is drawn as, and of a merge's wider node. */
 const NODE_R = 4

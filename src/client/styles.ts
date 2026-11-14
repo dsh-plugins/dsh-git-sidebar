@@ -1281,6 +1281,12 @@ export const PANEL_STYLES = `
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
+  /*
+   * Rows are a fixed height and the region is sized in whole rows, so snapping
+   * keeps a wheel gesture from parking the list between two of them: a row cut
+   * at the top edge reads as a broken list even when it is only a scroll offset.
+   */
+  scroll-snap-type: y mandatory;
 }
 
 /*
@@ -1297,7 +1303,7 @@ export const PANEL_STYLES = `
   display: flex;
   flex-direction: column;
   margin: 0;
-  padding: 2px 0 4px;
+  padding: 0 0 4px;
   list-style: none;
 }
 
@@ -1307,6 +1313,7 @@ export const PANEL_STYLES = `
   height: 26px;
   padding: 0 6px 0 0;
   border-radius: var(--dsw-radius-sm);
+  scroll-snap-align: start;
 }
 
 /*

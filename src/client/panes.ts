@@ -40,7 +40,7 @@ export type PaneCollapsed = Record<PaneId, boolean>
  * together still leave room inside the several hundred pixels a sidebar gives the
  * panel with the branch header above them.
  */
-export const PANE_DEFAULTS: PaneSizes = { changes: 200, commit: 224, history: 240 }
+export const PANE_DEFAULTS: PaneSizes = { changes: 200, commit: 224, history: 231 }
 
 /** Every region expanded: what a fresh panel starts with. */
 export const PANES_EXPANDED: PaneCollapsed = { changes: false, commit: false, history: false }
@@ -53,6 +53,29 @@ export const PANE_MAX = 900
 
 /** How far one arrow key moves a handle. */
 export const PANE_STEP = 16
+
+/** What a region spends above its content: the grab strip and the title row. */
+export const PANE_HEAD_H = 34
+
+/**
+ * Round one region's height down to a whole number of rows.
+ *
+ * The history draws rows of a fixed height, so a region whose content box is not
+ * a multiple of that height always cuts its last row in half — the one thing a
+ * reader notices immediately, because it looks like the list is broken rather
+ * than scrollable. Rounding the height instead keeps every row whole, and the
+ * cost is at most one row of empty space.
+ * @param id - the region being sized.
+ * @param size - the height asked for.
+ * @param rowHeight - the height of one row of that region's content.
+ * @param chrome - what the region spends above its rows.
+ * @returns the height to use, snapped when the region has fixed rows.
+ */
+export function snapPaneSize(id: PaneId, size: number, rowHeight: number, chrome: number = 0): number {
+  if (id !== 'history') return size
+  const rows = Math.max(3, Math.floor((size - chrome) / rowHeight))
+  return chrome + rows * rowHeight
+}
 
 /** The class a drag puts on `body`, which is what keeps it from selecting text. */
 export const DRAGGING_CLASS = `${PREFIX}-dragging`
@@ -85,11 +108,12 @@ export function resizePaneSize(size: number, delta: number): number {
  * @param id - the region whose handle was pressed.
  * @param size - the region's height now.
  * @param key - the key the handle received.
+ * @param step - how far one press moves it, which a row-based region rounds up.
  * @returns the new height, or undefined for a key the handle ignores.
  */
-export function paneKeySize(id: PaneId, size: number, key: string): number | undefined {
-  if (key === 'ArrowUp') return resizePaneSize(size, PANE_STEP)
-  if (key === 'ArrowDown') return resizePaneSize(size, -PANE_STEP)
+export function paneKeySize(id: PaneId, size: number, key: string, step: number = PANE_STEP): number | undefined {
+  if (key === 'ArrowUp') return resizePaneSize(size, step)
+  if (key === 'ArrowDown') return resizePaneSize(size, -step)
   if (key === 'Home') return PANE_DEFAULTS[id]
   return undefined
 }

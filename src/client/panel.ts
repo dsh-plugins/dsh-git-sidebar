@@ -30,13 +30,13 @@ import {
   askBranchName, confirmAbort, confirmDeleteBranch, confirmDetach, confirmDiscard, confirmForceDelete,
   confirmMerge, confirmSync, notify,
 } from './dialog.ts'
-import { makeHistory } from './history.ts'
+import { HISTORY_CHROME_H, makeHistory, ROW_H } from './history.ts'
 import { Icon } from './icons.ts'
 import { makeFileRow, type RowAction } from './row.ts'
 import { makeStashGroup, type StashProps } from './stash-group.ts'
 import { PREFIX } from './styles.ts'
 import {
-  clampPaneSize, gitPane, PANE_DEFAULTS, PANES_EXPANDED, PANE_MIN, paneKeySize, startPaneDrag,
+  clampPaneSize, gitPane, PANE_DEFAULTS, PANES_EXPANDED, PANE_MIN, paneKeySize, snapPaneSize, startPaneDrag,
   type PaneCollapsed, type PaneId, type PaneKeyEvent, type PanePointerEvent, type PaneSizes,
 } from './panes.ts'
 import { conflictNotice, makeConflictView } from './conflict-view.ts'
@@ -869,13 +869,16 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const sizePane = (id: PaneId, size: number): void => {
       setPaneSizes((previous) => {
         const above = paneAbove(id)
-        const wanted = clampPaneSize(size)
+        const wanted = snapPaneSize(id, clampPaneSize(size), ROW_H, HISTORY_CHROME_H)
         if (above === undefined) return { ...previous, [id]: wanted }
         // What the pair can give: the region cannot shrink past its floor, and the
-        // one above cannot grow past the height that is left for it.
+        // one above cannot grow past the height that is left for it. Snapping
+        // after the trade keeps the moved region on whole rows, and the region
+        // above gives up exactly what the move took.
         const least = PANE_MIN - previous[id]
         const most = previous[above] - PANE_MIN
-        const taken = Math.max(least, Math.min(wanted - previous[id], most))
+        const asked = Math.max(least, Math.min(wanted - previous[id], most))
+        const taken = snapPaneSize(id, previous[id] + asked, ROW_H, HISTORY_CHROME_H) - previous[id]
         return { ...previous, [id]: previous[id] + taken, [above]: previous[above] - taken }
       })
       setCollapsedPanes(previous => (previous[id] ? { ...previous, [id]: false } : previous))
@@ -912,7 +915,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * @param event - the key, which is only acted on when the handle owns it.
      */
     const resizeByKey = (id: PaneId, event: PaneKeyEvent): void => {
-      const next = paneKeySize(id, paneSizes[id], event.key)
+      // A region of fixed rows steps by a row, so a key press always lands on a
+      // whole row rather than leaving the last one cut in half.
+      const next = paneKeySize(id, paneSizes[id], event.key, id === 'history' ? ROW_H : undefined)
       if (next === undefined) return
       event.preventDefault?.()
       sizePane(id, next)
