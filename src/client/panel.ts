@@ -274,15 +274,18 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       const cached = cache.history.get(sessionId)
       if (cached !== undefined && skip === 0) return Promise.resolve(cached)
       return calls.history(limit, skip).then((page) => {
+        // The cache holds the list as the reader has built it so far, but the
+        // caller asked for one page and appends it itself. Returning the merged
+        // list here would make the two accumulations compound.
         if (skip === 0) {
           appendHistory(cache, sessionId, { commits: page.commits, hasMore: page.hasMore })
           return page
         }
-        const committed = cached === undefined
-          ? { commits: page.commits, hasMore: page.hasMore }
-          : { commits: [...cached.commits, ...page.commits], hasMore: page.hasMore }
-        appendHistory(cache, sessionId, committed)
-        return committed
+        appendHistory(cache, sessionId, {
+          commits: [...(cached?.commits ?? []), ...page.commits],
+          hasMore: page.hasMore,
+        })
+        return page
       })
     }
 
@@ -347,6 +350,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       setRefreshing(true)
       invalidateSession(cache, sessionId)
       runtime.clearDiffCache?.()
+      // The list keeps its own rows, so dropping the cache is not enough: the
+      // revision is what tells it the page it holds is the one just thrown away.
+      dropHistory()
       // Both reads are awaited, so the bar lasts exactly as long as the work the
       // reader asked for. A cache hit cannot happen here: the entry was just
       // deleted, so both calls go to the Host.
