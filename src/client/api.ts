@@ -12,7 +12,7 @@
  */
 
 import type {
-  BranchList, CommitDetailArgs, CommitOutcome, ConflictChoice, ConflictContent, DiffArgs, DiffPayload, HistoryPage,
+  BranchList, CommitDetailArgs, CommitOutcome, ConflictChoice, ConflictContent, DiffArgs, DiffPayload, HistoryPage, HunkArgs,
   SnapshotProblem, StashEntry, StatusSnapshot, SyncAction, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_NAMESPACE } from '../shared.ts'
@@ -154,6 +154,8 @@ export interface GitSidebarRemote {
     readonly choices: readonly ConflictChoice[]
   }): Promise<RemoteResult<WriteOutcome>>
   abortOperation(args: { readonly sessionId: string }): Promise<RemoteResult<WriteOutcome>>
+  stageHunk(args: HunkArgs): Promise<RemoteResult<WriteOutcome>>
+  unstageHunk(args: HunkArgs): Promise<RemoteResult<WriteOutcome>>
 }
 
 /**
@@ -180,6 +182,8 @@ export interface GitSidebarApi {
   conflict(sessionId: string, path: string): Promise<ConflictContent>
   resolveConflict(sessionId: string, path: string, choices: readonly ConflictChoice[]): Promise<WriteOutcome>
   abortOperation(sessionId: string): Promise<WriteOutcome>
+  stageHunk(args: HunkArgs): Promise<WriteOutcome>
+  unstageHunk(args: HunkArgs): Promise<WriteOutcome>
 }
 
 /** The namespace mount, started at apply time and awaited by the first body that draws. */
@@ -367,6 +371,12 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
     },
     abortOperation(sessionId: string): Promise<WriteOutcome> {
       return foldWrite(() => remote.abortOperation({ sessionId }))
+    },
+    stageHunk(args: HunkArgs): Promise<WriteOutcome> {
+      return foldWrite(() => remote.stageHunk(args))
+    },
+    unstageHunk(args: HunkArgs): Promise<WriteOutcome> {
+      return foldWrite(() => remote.unstageHunk(args))
     },
   }
 }

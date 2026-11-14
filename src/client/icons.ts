@@ -10,6 +10,11 @@
 
 import type { ReactLike } from './api.ts'
 
+/** The share of the loader's React an icon needs: one `createElement`. */
+export interface IconReactSurface {
+  createElement(type: unknown, props?: unknown, ...children: unknown[]): unknown
+}
+
 /** Material Symbols grid the paths below are authored on. */
 const VIEW_BOX = '0 -960 960 960'
 
@@ -72,7 +77,7 @@ export type IconName = keyof typeof ICONS
  * @param props - optional size override and accessible name.
  * @returns the SVG element.
  */
-export function Icon(React: ReactLike, name: IconName, props: { size?: number; label?: string } = {}): unknown {
+export function Icon(React: IconReactSurface, name: IconName, props: { size?: number; label?: string } = {}): unknown {
   const labelled = props.label !== undefined
   return React.createElement('svg', {
     viewBox: VIEW_BOX,

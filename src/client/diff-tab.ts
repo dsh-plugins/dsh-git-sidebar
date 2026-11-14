@@ -25,11 +25,12 @@
  * know the target of a later navigation.
  */
 
-import type { CommitDetailArgs, DiffArgs, DiffHunk, DiffPayload } from '../shared.ts'
+import type { CommitDetailArgs, DiffArgs, DiffHunk, DiffPayload, HunkArgs, WriteOutcome } from '../shared.ts'
 import {
   DIFF_ADDRESS_PREFIX, DIFF_TAB_ID, DIFF_TAB_KIND, parseCommitDiffAddress, parseDiffAddress,
 } from '../shared.ts'
 import { basenameOf, toRows, type DiffRow } from './diff-parse.ts'
+import { hunkButtons, type DiffSide, type HunkControls } from './hunk-controls.ts'
 
 /**
  * The React face this module calls.
@@ -41,7 +42,7 @@ import { basenameOf, toRows, type DiffRow } from './diff-parse.ts'
  */
 export interface DiffReactSurface {
   createElement(type: unknown, props?: unknown, ...children: unknown[]): unknown
-  useState<T>(initial: T): [T, (value: T) => void]
+  useState<T>(initial: T): [T, (value: T | ((previous: T) => T)) => void]
   useEffect(effect: () => (() => void) | void, deps: readonly unknown[]): void
 }
 
@@ -84,6 +85,13 @@ export interface DiffRuntime {
    * @returns the Host's payload, in the same shape a file diff arrives in.
    */
   requestCommit?: (args: CommitDetailArgs, signal?: AbortSignal) => Promise<DiffPayload>
+  /**
+   * Move one hunk into or out of the index.
+   *
+   * The viewer supplies this only when the tab names a file side of the index; a
+   * commit's diff has no index to move a block of history into.
+   */
+  moveHunk?: (args: HunkArgs, direction: 'stage' | 'unstage') => Promise<WriteOutcome>
   /** Translate one copy key of {@link DIFF_DICTS}. */
   t?: (key: string) => string
   /** True once the entry injected {@link DIFF_STYLES} through `ctx.effect`, so the body need not. */
@@ -100,6 +108,8 @@ export interface DiffBodyProps {
   requestDiff?: DiffRuntime['requestDiff']
   /** Commit reader injected through the seat's `inject` callback, if the entry chose that path. */
   requestCommit?: DiffRuntime['requestCommit']
+  /** Hunk mover injected through the seat's `inject` callback, if the entry chose that path. */
+  moveHunk?: DiffRuntime['moveHunk']
   /** Copy injected through the seat's `inject` callback, if the entry registered a locale. */
   t?: (key: string) => string
 }
@@ -142,6 +152,8 @@ export const DIFF_DICTS: DiffDictionaries = {
     'commitUnavailable': '这个提交的差异暂不可用',
     'unknownTarget': '这个差异标签页没有对应到文件或提交',
     'unavailable': '差异服务不可用',
+    'hunk.stage': '暂存此块',
+    'hunk.unstage': '取消暂存此块',
   },
   en: {
     'title': 'Diff',
@@ -156,6 +168,8 @@ export const DIFF_DICTS: DiffDictionaries = {
     'commitUnavailable': 'This commit’s diff is unavailable',
     'unknownTarget': 'This diff tab names no file or commit',
     'unavailable': 'The diff service is unavailable',
+    'hunk.stage': 'Stage this block',
+    'hunk.unstage': 'Unstage this block',
   },
 }
 
@@ -218,6 +232,13 @@ export function makeDiffBody(React: unknown, runtime?: DiffRuntime): (props: unk
     const requestCommit = props.requestCommit ?? runtime?.requestCommit
     const t = translator(props.t ?? runtime?.t)
     const [state, setState] = R.useState<ViewState>({ status: 'loading' })
+    const [moving, setMoving] = R.useState<number | null>(null)
+    const [moveNotice, setMoveNotice] = R.useState('')
+    const moveHunk = props.moveHunk ?? runtime?.moveHunk
+    // A hunk is only movable on a file side of the index: a commit is history.
+    const side: DiffSide = target === undefined || target.kind === 'commit'
+      ? 'commit'
+      : target.staged ? 'staged' : 'worktree'
     // A target that changes identity while the pane stays mounted is a new
     // request; the string is what the effect below compares, so a fresh object
     // of the same target does not read again.
@@ -259,11 +280,40 @@ export function makeDiffBody(React: unknown, runtime?: DiffRuntime): (props: unk
 
     const truncated = state.status === 'ready' && state.payload.kind === 'text'
       && state.payload.truncated === true
+    // Reading again after a move is what shows the hunk on its new side; the
+    // key change re-runs the effect below.
+    const [revisionTick, setRevisionTick] = R.useState(0)
+    const controls = moveHunk === undefined || target === undefined || target.kind === 'commit' || sessionId === undefined
+      ? undefined
+      : {
+        side,
+        busy: moving !== null,
+        t,
+        move: (index: number, direction: 'stage' | 'unstage'): void => {
+          setMoving(index)
+          void moveHunk({
+            sessionId,
+            path: (target as { path: string }).path,
+            hunk: index,
+          }, direction).then((outcome) => {
+            setMoving(null)
+            if (outcome.ok) {
+              setMoveNotice('')
+              setRevisionTick((tick) => tick + 1)
+              return
+            }
+            // A refused move is the whole reason the reader pressed: stating it
+            // beside the patch beats leaving the hunk where it was in silence.
+            setMoveNotice(outcome.message)
+          })
+        },
+      }
     return R.createElement('div', { className: PREFIX, ...identityOf(target) },
       runtime?.stylesInstalled === true ? null : styleElement(R),
       head(R, t, target, state),
+      moveNotice === '' ? null : banner(R, moveNotice),
       truncated ? banner(R, t('truncated')) : null,
-      content(R, t, target, state, missingReader),
+      content(R, t, target, state, missingReader, controls, revisionTick),
     )
   }
 
@@ -346,6 +396,8 @@ function content(
   target: DiffTarget | undefined,
   state: ViewState,
   missingReader: boolean,
+  controls?: HunkControls,
+  revision = 0,
 ): unknown {
   if (target === undefined) return note(React, t('unknownTarget'))
   if (missingReader) {
@@ -361,16 +413,23 @@ function content(
   }
   if (payload.hunks.length === 0) return note(React, t('empty'))
   const rows = toRows(payload.hunks)
-  return React.createElement('div', { className: `${PREFIX}-body` },
+  // A hunk index counts `@@` blocks, not rows: the counter advances only on a
+  // hunk header, so the button a reader sees carries the position the Host
+  // expects.
+  let hunk = -1
+  return React.createElement('div', { className: `${PREFIX}-body`, 'data-git-diff-revision': String(revision) },
     React.createElement('div', { className: `${PREFIX}-rows` },
-      ...rows.map((row, index) => drawn(React, row, index))),
+      ...rows.map((row, index) => {
+        if (row.kind === 'hunk-header') hunk += 1
+        return drawn(React, row, index, row.kind === 'hunk-header' ? hunkButtons(React, controls, hunk, PREFIX) : null)
+      })),
   )
 }
 
 /** One drawn row: its two numbers, its sign, and its text. */
-function drawn(React: DiffReactSurface, row: DiffRow, key: number): unknown {
+function drawn(React: DiffReactSurface, row: DiffRow, key: number, extra?: unknown): unknown {
   if (row.kind === 'hunk-header') {
-    return React.createElement('div', { key, className: `${PREFIX}-hunk` }, row.text)
+    return React.createElement('div', { key, className: `${PREFIX}-hunk` }, row.text, extra)
   }
   if (row.kind === 'meta') {
     return React.createElement('div', { key, className: `${PREFIX}-meta` }, row.text)
@@ -633,11 +692,46 @@ export const DIFF_STYLES = `
   background: transparent;
 }
 .${PREFIX}-hunk {
+  display: flex;
+  gap: 8px;
+  align-items: center;
   padding: 2px 12px;
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-1);
   white-space: pre;
   font-family: var(--dsh-font-family-code, ui-monospace, monospace);
+}
+.${PREFIX}-hunk-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  margin-left: auto;
+  font-family: var(--dsh-content-font-family, inherit);
+}
+.${PREFIX}-hunk-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 2px;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+.${PREFIX}-hunk-action svg {
+  width: 16px;
+  height: 16px;
+}
+.${PREFIX}-hunk-action:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.${PREFIX}-hunk-action:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
 }
 .${PREFIX}-meta {
   padding: 0 12px;

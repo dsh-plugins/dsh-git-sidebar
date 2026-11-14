@@ -12,8 +12,8 @@ import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import {
   BranchList, BranchListArgs, CheckoutArgs, CommitArgs, CommitDetailArgs, CommitOutcome, ConflictArgs,
   ConflictChoice, ConflictContent, CreateBranchArgs, DiffArgs, DiffPayload, DiscardArgs, HistoryArgs, HistoryPage,
-  PathsArgs, ResolveConflictArgs, AbortArgs, StashApplyArgs, StashArgs, StashDropArgs, StashEntry, StashListArgs,
-  StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
+  HunkArgs, PathsArgs, ResolveConflictArgs, AbortArgs, StashApplyArgs, StashArgs, StashDropArgs, StashEntry,
+  StashListArgs, StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_METHODS } from '../remote-descriptor.ts'
 import {
@@ -22,10 +22,11 @@ import {
 } from './branch.ts'
 import { readConflict, writeResolved } from './conflict.ts'
 import type { HostContext, HostSession } from './context.ts'
-import { readDiff } from './diff.ts'
+import { readDiff, patchRunner, readPatch } from './diff.ts'
 import type { DiffConfig } from './diff.ts'
 import { GitFailure, GitMissingError, gitIn } from './git.ts'
 import type { GitConfig, GitRunner } from './git.ts'
+import { applyHunk, hunkPatch } from './hunk.ts'
 import { readBranches, readCommitDiff, readHistory, readOperation, readStashes, readUpstream } from './refs.ts'
 import { NoRepository, messageOf, readIdentity, readStatus, topLevel, unavailable } from './status.ts'
 import { commitStaged, hasStagedChanges, write } from './write.ts'
@@ -363,6 +364,24 @@ export class GitSidebarService extends TypertRemoteService {
   }
 
   /**
+   * Stage one hunk of a file's unstaged diff.
+   * @param args - the Session, the path, and the hunk's position.
+   * @returns the new snapshot, or the refusal.
+   */
+  async stageHunk(args?: HunkArgs): Promise<WriteOutcome> {
+    return await this.applyHunkWrite(args, false)
+  }
+
+  /**
+   * Remove one hunk of a file's staged diff from the index.
+   * @param args - the Session, the path, and the hunk's position.
+   * @returns the new snapshot, or the refusal.
+   */
+  async unstageHunk(args?: HunkArgs): Promise<WriteOutcome> {
+    return await this.applyHunkWrite(args, true)
+  }
+
+  /**
    * Restore the given paths from the index, optionally removing untracked files.
    * @param args - the Session, the paths, and whether untracked files go too.
    * @returns the new snapshot, or the refusal.
@@ -424,6 +443,37 @@ export class GitSidebarService extends TypertRemoteService {
     return await this.writeWith(sessionId, async (git) => {
       await write(git, kind, { paths: wanted, includeUntracked })
       return null
+    })
+  }
+
+  /**
+   * Move one hunk of one file into or out of the index.
+   *
+   * The patch is read again here rather than taken from the browser, so a hunk
+   * index always refers to the diff as Git reports it now: an index past the
+   * end means the file changed under the reader, which is exactly the stale
+   * case the client refreshes for. The side to read and the direction to apply
+   * flip together, because a staged hunk is removed by reversing its own patch.
+   * @param args - the Session, the path, and the hunk's position.
+   * @param reverse - remove the hunk from the index instead of adding it.
+   * @returns the new snapshot, or the refusal.
+   */
+  private async applyHunkWrite(args: HunkArgs | undefined, reverse: boolean): Promise<WriteOutcome> {
+    const path = typeof args?.path === 'string' ? args.path : ''
+    if (path.length === 0) return { ok: false, problem: 'no-paths', message: 'no path was given' }
+    if (typeof args?.hunk !== 'number' || !Number.isInteger(args.hunk) || args.hunk < 0) return staleHunk()
+    const hunk = args.hunk
+    return await this.writeWith(args.sessionId, async (git, session, root) => {
+      const patcher = patchRunner(this.home, this.config, session, root, this.signalOf())
+      const capture = await readPatch(patcher, { path, staged: reverse }, this.config.maxDiffBytes)
+      if (capture.kind === 'error') return { ok: false, problem: 'failed', message: capture.message }
+      if (capture.kind === 'binary') {
+        return { ok: false, problem: 'failed', message: 'the file has no textual diff to apply' }
+      }
+      if (capture.lossy) return staleHunk()
+      const patch = hunkPatch(capture.patch, hunk)
+      if (patch === undefined) return staleHunk()
+      return await applyHunk(git, patch, reverse)
     })
   }
 
@@ -517,6 +567,11 @@ async function allPaths(git: GitRunner): Promise<string[]> {
     .split('\0')
     .map(entry => entry.slice(3).trim())
     .filter(path => path.length > 0)
+}
+
+/** The refusal a hunk write returns when the diff it was asked about is no longer the current one. */
+function staleHunk(): WriteOutcome {
+  return { ok: false, problem: 'stale', message: '差异已变化，请刷新后重试' }
 }
 
 Object.defineProperty(GitSidebarService.prototype, REMOTE_METHOD_DESCRIPTOR, {

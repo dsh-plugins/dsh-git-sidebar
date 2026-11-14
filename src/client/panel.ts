@@ -644,6 +644,9 @@ function refusalText(t: Translate, problem: string, message: string, fallback: s
   if (problem === 'dirty') return t('notice.dirty')
   if (problem === 'exists') return t('notice.exists')
   if (problem === 'invalid-name') return t('notice.invalidName')
+  // A stale hunk means the file moved under the reader, so the sentence states
+  // the refresh rather than repeating Git's own diagnostic.
+  if (problem === 'stale') return t('notice.stale')
   return message === '' ? fallback : message
 }
 

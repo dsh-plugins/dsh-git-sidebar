@@ -137,6 +137,7 @@ const DICTS: Record<string, Record<string, string>> = {
     'notice.dirty': '有未提交的改动，无法切换分支',
     'notice.exists': '同名分支已存在',
     'notice.invalidName': '这个名称不是有效的分支名',
+    'notice.stale': '差异已变化，请刷新后重试',
     'state.noSession.title': '没有可用的会话',
     'state.noSession.body': '打开一个会话后，这里会显示该会话工作目录的 Git 状态。',
     'state.clean.title': '没有未提交的更改',
@@ -254,6 +255,7 @@ const DICTS: Record<string, Record<string, string>> = {
     'notice.dirty': 'The working tree has uncommitted changes, so the branch was not switched',
     'notice.exists': 'A branch with that name already exists',
     'notice.invalidName': 'That is not a valid branch name',
+    'notice.stale': 'The diff changed; refresh and try again',
     'state.noSession.title': 'No Session to read',
     'state.noSession.body': 'Open a Session and this panel shows the Git state of its working directory.',
     'state.clean.title': 'No uncommitted changes',
@@ -381,6 +383,8 @@ loader.load({
         const DiffBody = makeDiffBody(React, {
           requestDiff: diffReader(remote),
           requestCommit: commitReader(remote),
+          moveHunk: (args, direction) => remote.ready.then(api =>
+            direction === 'unstage' ? api.unstageHunk(args) : api.stageHunk(args)),
           t: ctx.locale.bind(DIFF_LOCALE_NS),
           stylesInstalled: true,
         })

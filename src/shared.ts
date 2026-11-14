@@ -97,7 +97,7 @@ export type CommitOutcome =
   | { readonly ok: false; readonly problem: CommitProblem; readonly message: string }
 
 /** Why a staging or discard request refused. */
-export type WriteProblem = 'no-paths' | 'failed' | 'dirty' | 'invalid-name' | 'exists'
+export type WriteProblem = 'no-paths' | 'failed' | 'dirty' | 'invalid-name' | 'exists' | 'stale'
 
 /** The result of a staging or discard request; every success returns the new snapshot. */
 export type WriteOutcome =
@@ -280,6 +280,14 @@ export interface ResolveConflictArgs {
    * remaining regions as they are.
    */
   readonly choices: readonly ConflictChoice[]
+}
+
+/** Arguments of a staging or discard request that names one hunk. */
+export interface HunkArgs {
+  readonly sessionId: string
+  readonly path: string
+  /** The hunk's position in the file's patch, counted from zero. */
+  readonly hunk: number
 }
 
 /** Arguments of an abort request. */
