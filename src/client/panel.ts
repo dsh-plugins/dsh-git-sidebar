@@ -36,7 +36,7 @@ import { makeFileRow, type RowAction } from './row.ts'
 import { makeStashGroup, type StashProps } from './stash-group.ts'
 import { PREFIX } from './styles.ts'
 import {
-  clampPaneSize, gitPane, PANE_DEFAULTS, PANES_EXPANDED, PANE_MIN, paneKeySize, snapPaneSize, startPaneDrag,
+  clampPaneSize, gitPane, PANE_DEFAULTS, PANE_FLOOR, PANES_EXPANDED, PANE_MIN, paneKeySize, snapPaneSize, startPaneDrag,
   type PaneCollapsed, type PaneId, type PaneKeyEvent, type PanePointerEvent, type PaneSizes,
 } from './panes.ts'
 import { conflictNotice, makeConflictView } from './conflict-view.ts'
@@ -859,30 +859,42 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * @param id - the region whose handle moved.
      * @returns the region above it, or undefined for the topmost one.
      */
-    const paneAbove = (id: PaneId): PaneId | undefined =>
-      id === 'commit' ? 'changes' : id === 'history' ? 'commit' : undefined
+    const aboveOf = (id: PaneId): readonly PaneId[] =>
+      id === 'history' ? ['commit', 'changes'] : id === 'commit' ? ['changes'] : []
 
     /**
-     * Set one region's height, taking the difference from the region above it.
+     * Set one region's height, taking the difference from the regions above it.
+     *
+     * A region cannot grow without another giving way, or the column would get
+     * taller than the body and scroll. The room comes from the nearest region
+     * above first and then from the ones further up, each down to its own floor:
+     * dragging the history taller shrinks the commit box to its single line before
+     * it starts taking the change list's room, which is the order a reader expects
+     * from the way the regions are stacked. Shrinking gives the room back the same
+     * way.
      * @param id - the region.
      * @param size - the height it should take.
      */
     const sizePane = (id: PaneId, size: number): void => {
       setPaneSizes((previous) => {
-        const above = paneAbove(id)
         const wanted = snapPaneSize(id, clampPaneSize(size), ROW_H, HISTORY_CHROME_H)
-        if (above === undefined) return { ...previous, [id]: wanted }
-        // What the pair can give: the region cannot shrink past its floor, and the
-        // one above cannot grow past the height that is left for it. Snapping
-        // after the trade keeps the moved region on whole rows, and the region
-        // above gives up exactly what the move took.
-        const least = PANE_MIN - previous[id]
-        const most = previous[above] - PANE_MIN
-        const asked = Math.max(least, Math.min(wanted - previous[id], most))
-        const taken = snapPaneSize(id, previous[id] + asked, ROW_H, HISTORY_CHROME_H) - previous[id]
-        return { ...previous, [id]: previous[id] + taken, [above]: previous[above] - taken }
+        const delta = wanted - previous[id]
+        if (delta === 0) return previous
+        const next = { ...previous, [id]: wanted }
+        let remaining = delta
+        for (const other of aboveOf(id)) {
+          if (remaining === 0) break
+          const room = next[other] - PANE_FLOOR[other]
+          const taken = remaining > 0 ? Math.min(remaining, room) : remaining
+          next[other] = next[other] - taken
+          remaining -= taken
+        }
+        // The topmost region has nothing above to borrow from, so it simply takes
+        // the height it was given; anything else can only use room that another
+        // region gave up.
+        next[id] = aboveOf(id).length === 0 ? wanted : wanted - Math.max(0, remaining)
+        return next
       })
-      setCollapsedPanes(previous => (previous[id] ? { ...previous, [id]: false } : previous))
     }
 
     /**

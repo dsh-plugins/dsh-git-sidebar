@@ -48,6 +48,16 @@ export const PANES_EXPANDED: PaneCollapsed = { changes: false, commit: false, hi
 /** The smallest height a region may be dragged or stepped to. */
 export const PANE_MIN = 120
 
+/**
+ * How small each region may get, which is what its content can survive.
+ *
+ * The change list keeps its tab row and lets the list scroll under it; the commit
+ * box keeps its amend row, a single line of message, and its buttons; the history
+ * keeps its head and a couple of rows. A shared floor would either cut the commit
+ * box's buttons off or stop the list from ever giving its room away.
+ */
+export const PANE_FLOOR: Record<PaneId, number> = { changes: 64, commit: 172, history: 120 }
+
 /** The largest height a region may take, so one handle cannot push the others away. */
 export const PANE_MAX = 900
 

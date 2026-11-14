@@ -632,22 +632,28 @@ export const PANEL_STYLES = `
 
 .gs-commit {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 6px;
+  min-height: 0;
   padding: 8px 8px 10px;
+  overflow: auto;
   border-top: 0.5px solid var(--dsw-alias-border-l3);
 }
 
+/* The message field is the one control that gives way when the reader shrinks
+   the region: the amend row and the buttons keep their height, and the field
+   shrinks to a single line before anything else is cut. */
 .gs-commit-input {
   box-sizing: border-box;
+  flex: 1 1 auto;
   width: 100%;
-  min-height: 62px;
+  min-height: 24px;
   max-height: 40vh;
   padding: 6px 8px;
   color: var(--dsw-alias-label-primary);
   font: inherit;
-  resize: vertical;
+  resize: none;
   background: var(--dsw-alias-bg-layer-1);
   border: 0.5px solid var(--dsw-alias-border-l4);
   border-radius: var(--dsw-radius-md);
@@ -665,6 +671,13 @@ export const PANEL_STYLES = `
 .gs-commit-input:disabled {
   color: var(--dsw-alias-label-secondary);
   cursor: default;
+}
+
+/* The amend row and the buttons keep their height: only the message field gives
+   way, and it stops at a single line before anything is clipped. */
+.gs-commit-head,
+.gs-commit-foot {
+  flex: none;
 }
 
 .gs-commit-foot {
@@ -1959,15 +1972,16 @@ export const PANEL_STYLES = `
   display: none;
 }
 
-/* The commit box is a stack of controls rather than a list, so its region
-   scrolls as a whole when the reader gives it less room than they need. The
-   bottom padding is what keeps the message field off the region's edge when the
-   box is exactly tall enough to hold it. */
+/* The commit box is a stack of controls rather than a list: the region is a flex
+   column so the message field can give way while the amend row and the buttons
+   keep their height, and the box scrolls only when the reader drags the region
+   below what those controls need. */
 .gs-pane[data-git-pane='commit'] .gs-pane-body {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: 0 2px 10px;
-  overflow: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
 }
 
 /* The change list keeps the same clearance at its foot, so the last row is not
