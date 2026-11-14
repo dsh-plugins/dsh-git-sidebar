@@ -590,7 +590,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
             actions: rowActions(entry, true, false),
             t,
             selected: selected.includes(selectionKey('staged', entry.path)),
-            onSelect: (event: RowSelectEvent) => { selectRow('staged', visible(snapshotNow.staged, true), entry.path, event.shiftKey) },
+            onSelect: (event: RowSelectEvent) => {
+              selectRow('staged', visible(snapshotNow.staged, true), entry.path, event.shiftKey)
+            },
           })),
           actions: [{
             id: 'unstage-all',
@@ -617,7 +619,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
             actions: rowActions(entry, false, false),
             t,
             selected: selected.includes(selectionKey('unstaged', entry.path)),
-            onSelect: (event: RowSelectEvent) => { selectRow('unstaged', visible(snapshotNow.unstaged, false), entry.path, event.shiftKey) },
+            onSelect: (event: RowSelectEvent) => {
+              selectRow('unstaged', visible(snapshotNow.unstaged, false), entry.path, event.shiftKey)
+            },
           })),
           actions: [{
             id: 'stage-all',
