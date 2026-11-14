@@ -779,9 +779,7 @@ export const PANEL_STYLES = `
 }
 
 .gs-menu {
-  position: absolute;
-  top: calc(100% - 4px);
-  right: 6px;
+  position: fixed;
   z-index: 21;
   display: flex;
   flex-direction: column;
@@ -802,9 +800,12 @@ export const PANEL_STYLES = `
 }
 
 .gs-branch-menu {
-  right: 6px;
-  left: 6px;
-  max-width: none;
+  /*
+   * The picker is placed under the branch button by measurement, so it keeps
+   * the shared menu width: stretching it edge to edge was what the absolute
+   * positioning needed, and that is gone.
+   */
+  min-width: 220px;
 }
 
 .gs-menu-title {

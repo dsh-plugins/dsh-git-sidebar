@@ -79,6 +79,13 @@ export interface DiffHunk {
   readonly header: string
   /** Optional section heading Git appends after the second `@@`. */
   readonly section?: string
+  /**
+   * The path this hunk belongs to, when the patch named one.
+   *
+   * A single file's diff has no need for it; a commit's patch spans several
+   * files, and the viewer groups by this to say which file a hunk changes.
+   */
+  readonly path?: string
   readonly lines: readonly DiffLine[]
 }
 

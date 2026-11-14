@@ -264,19 +264,40 @@ export function parsePatch(text: string): DiffHunk[] {
   const hunks: DiffHunk[] = []
   let lines: DiffLine[] | undefined
   let columns = 1
+  // The file the hunks below belong to. A commit's patch spans several files,
+  // and the `diff --git` line that announces each one is the only place the
+  // path appears before its hunks, so it is read rather than skipped.
+  let fromGit: string | undefined
+  let fromOld: string | undefined
+  let fromNew: string | undefined
   for (const raw of text.split('\n')) {
     const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw
     if (line.startsWith('@@')) {
       const parsed = hunkHeader(line)
       columns = parsed.columns
       lines = []
-      hunks.push(parsed.section.length === 0
-        ? { header: parsed.header, lines }
-        : { header: parsed.header, section: parsed.section, lines })
+      const path = fromNew ?? fromOld ?? fromGit
+      hunks.push({
+        header: parsed.header,
+        ...(parsed.section.length === 0 ? {} : { section: parsed.section }),
+        ...(path === undefined ? {} : { path }),
+        lines,
+      })
       continue
     }
     if (line.startsWith('diff --git ') || line.startsWith('diff --cc ')) {
       lines = undefined
+      fromGit = gitPath(line)
+      fromOld = undefined
+      fromNew = undefined
+      continue
+    }
+    if (line.startsWith('--- ')) {
+      fromOld = sidePath(line.slice(4))
+      continue
+    }
+    if (line.startsWith('+++ ')) {
+      fromNew = sidePath(line.slice(4))
       continue
     }
     if (lines === undefined || line.length === 0) continue
@@ -284,4 +305,34 @@ export function parsePatch(text: string): DiffHunk[] {
     if (parsed !== undefined) lines.push(parsed)
   }
   return hunks
+}
+
+/**
+ * The path of a `--- a/x` or `+++ b/x` line.
+ *
+ * `/dev/null` is how Git names the side that does not exist, which happens for
+ * an added or a deleted file; it carries no path, so the other side is used.
+ * @param value - the line with its `---` or `+++` marker removed.
+ * @returns the path, or undefined when the side does not exist.
+ */
+function sidePath(value: string): string | undefined {
+  // Git appends a tab and a timestamp when the patch is not `-p` stripped.
+  const name = value.split('\t')[0]?.trim() ?? ''
+  if (name.length === 0 || name === '/dev/null') return undefined
+  return name.replace(/^[ab]\//, '')
+}
+
+/**
+ * The path a `diff --git a/x b/x` line names.
+ *
+ * The line is only a fallback: with a path holding a space it is ambiguous,
+ * which is why the `---` and `+++` lines are preferred when they are present.
+ * @param line - the `diff --git` line.
+ * @returns the new-side path when the two sides agree, else the whole tail.
+ */
+function gitPath(line: string): string | undefined {
+  const tail = line.replace(/^diff --git /, '')
+  const match = /^a\/(.*) b\/(.*)$/.exec(tail)
+  if (match === null) return tail.trim() === '' ? undefined : tail.trim()
+  return match[2]
 }

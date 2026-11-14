@@ -22,6 +22,7 @@ import type { ReactLike, TabInfo, Translate } from './api.ts'
 import type { GraphLaneSegment, GraphRow } from './graph-model.ts'
 import { layoutGraph } from './graph-model.ts'
 import { Icon } from './icons.ts'
+import { makeProgress } from './progress.ts'
 import { PREFIX } from './styles.ts'
 
 /** Commits one page carries. */
@@ -107,6 +108,7 @@ export interface HistoryProps {
  * @returns the component the panel draws in its lower half.
  */
 export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown {
+  const Progress = makeProgress(React)
   return function History(props: HistoryProps): unknown {
     const { t, open } = props
     const [commits, setCommits] = React.useState<readonly CommitEntry[]>(props.initial?.commits ?? [])
@@ -243,6 +245,7 @@ export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown 
         onClick: props.onRefresh,
       }, Icon(React, 'refresh')),
     ),
+    open ? React.createElement(Progress, { active: loading }) : null,
     open ? historyBody(React, props, body) : null,
     menu === null ? null : commitMenu(React, props, menu, closeMenu),
     )

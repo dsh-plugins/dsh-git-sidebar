@@ -55,6 +55,35 @@ function mergeable(branches: BranchList | undefined): string[] {
 /** Which dropdown of the header is open, if any. */
 type Menu = 'none' | 'branch' | 'more'
 
+/** Width a menu reserves when it is placed, used to keep it inside the window. */
+const MENU_W = 200
+
+/** The share of a DOM node the menu needs to place itself. */
+interface MenuAnchor {
+  getBoundingClientRect(): { readonly bottom: number; readonly left: number }
+}
+
+/** The share of a click the menu buttons read. */
+interface MenuClick {
+  readonly currentTarget: MenuAnchor
+}
+
+/**
+ * Where a menu hangs: under the control that opened it, and never past the
+ * window's right edge.
+ *
+ * The header spans the whole panel, so anchoring to it — which is what a plain
+ * `right: 6px` does — puts a dropdown from a left-hand control at the far right.
+ * Measuring the control is what keeps the menu beside the thing it belongs to.
+ * @param node - the button that opened the menu.
+ * @returns the fixed position to draw at.
+ */
+function anchorUnder(node: MenuAnchor): { top: number; left: number } {
+  const box = node.getBoundingClientRect()
+  const widest = window.innerWidth - MENU_W - 8
+  return { top: box.bottom + 4, left: Math.max(8, Math.min(box.left, widest)) }
+}
+
 /**
  * Build the branch header.
  * @param React - the loader's React.
@@ -64,6 +93,7 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
   return function BranchHeader(props: BranchHeaderProps): unknown {
     const { snapshot, loading, busy, t } = props
     const [menu, setMenu] = React.useState<Menu>('none')
+    const [menuAt, setMenuAt] = React.useState<{ top: number; left: number } | null>(null)
     const [branches, setBranches] = React.useState<BranchList | undefined>(undefined)
     const [draft, setDraft] = React.useState('')
 
@@ -80,6 +110,20 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
     }, [menu])
 
     const close = (): void => { setMenu('none') }
+
+    /**
+     * Open a menu under the control that asked for it, or close the open one.
+     * @param kind - which menu.
+     * @param node - the button, measured to place the menu.
+     */
+    const openMenu = (kind: Menu, node: MenuAnchor): void => {
+      if (menu === kind) {
+        setMenu('none')
+        return
+      }
+      setMenuAt(anchorUnder(node))
+      setMenu(kind)
+    }
     const detached = snapshot?.branch === null
     const usable = snapshot !== undefined && snapshot.kind === 'repository'
     const label = !usable
@@ -120,7 +164,7 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
             'aria-haspopup': 'menu',
             'aria-expanded': menu === 'branch' ? 'true' : 'false',
             title: root === undefined ? label : `${label}\n${root}`,
-            onClick: () => { setMenu(menu === 'branch' ? 'none' : 'branch') },
+            onClick: (event: MenuClick) => { openMenu('branch', event.currentTarget) },
           },
           React.createElement('span', { className: `${PREFIX}-branch-name` }, label),
           Icon(React, 'chevron', { size: 14 })),
@@ -143,7 +187,7 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
           'aria-haspopup': 'menu',
           'aria-expanded': menu === 'more' ? 'true' : 'false',
           disabled: !usable || busy,
-          onClick: () => { setMenu(menu === 'more' ? 'none' : 'more') },
+          onClick: (event: MenuClick) => { openMenu('more', event.currentTarget) },
         }, Icon(React, 'more')),
         React.createElement('button', {
           type: 'button',
@@ -160,7 +204,7 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
           'data-git-dismiss': '',
           onClick: close,
         }),
-        menu === 'branch' ? picker(React, props, branches, draft, setDraft, create, pick, busy, close) : null,
+        menu === 'branch' ? picker(React, props, branches, draft, setDraft, create, pick, busy, close, menuAt) : null,
         menu === 'more' ? operations(React, props, usable, busy, () => {
           setMenu('none')
           props.sync('fetch')
@@ -173,7 +217,7 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
         }, mergeable(branches), (branch) => {
           setMenu('none')
           props.mergeBranch(branch)
-        }) : null,
+        }, menuAt) : null,
       ),
       operation === null ? null : operationBar(React, t, operation, busy, props.abort),
     )
@@ -234,6 +278,7 @@ function picker(
   pick: (branch: string) => void,
   busy: boolean,
   close: () => void,
+  at: { top: number; left: number } | null,
 ): unknown {
   const { t } = props
   const current = branches?.current ?? null
@@ -242,6 +287,7 @@ function picker(
     className: `${PREFIX}-menu ${PREFIX}-branch-menu`,
     'data-git-branch-menu': '',
     role: 'menu',
+    style: at === null ? undefined : { top: `${at.top}px`, left: `${at.left}px` },
   },
   React.createElement('p', { className: `${PREFIX}-menu-title` }, t('branch.selector')),
   branches === undefined
@@ -320,6 +366,7 @@ function operations(
   stash: () => void,
   localBranches: readonly string[],
   merge: (branch: string) => void,
+  at: { top: number; left: number } | null,
 ): unknown {
   const { t } = props
   const items = [
@@ -331,6 +378,7 @@ function operations(
     className: `${PREFIX}-menu ${PREFIX}-more-menu`,
     'data-git-more-menu': '',
     role: 'menu',
+    style: at === null ? undefined : { top: `${at.top}px`, left: `${at.left}px` },
   },
   ...items.map(item => React.createElement('button', {
     key: item.id,

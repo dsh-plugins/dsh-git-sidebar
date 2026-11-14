@@ -12,8 +12,8 @@
 
 import type { DiffHunk, DiffLine } from '../shared.ts'
 
-/** How one drawn line reads: a block header, ordinary content, or a change. */
-export type RowKind = 'hunk-header' | 'context' | 'added' | 'removed' | 'meta'
+/** How one drawn line reads: a file name, a block header, content, or a change. */
+export type RowKind = 'file' | 'hunk-header' | 'context' | 'added' | 'removed' | 'meta'
 
 /** One line of the viewer, numbered per side where that side has the line. */
 export interface DiffRow {
@@ -83,7 +83,15 @@ export function parseHunkHeader(header: string): HunkRange | undefined {
  */
 export function toRows(hunks: readonly DiffHunk[]): DiffRow[] {
   const rows: DiffRow[] = []
+  let current: string | undefined
   for (const hunk of hunks) {
+    // A commit's patch spans several files. The name is drawn once, before the
+    // first hunk of each, so a reader can tell which file the lines below
+    // change without scrolling back to the top of the tab.
+    if (hunk.path !== undefined && hunk.path !== current) {
+      current = hunk.path
+      rows.push({ kind: 'file', text: hunk.path })
+    }
     rows.push({ kind: 'hunk-header', text: drawn(hunk.header) })
     const section = hunk.section?.trim() ?? ''
     if (section !== '') rows.push({ kind: 'meta', text: section })

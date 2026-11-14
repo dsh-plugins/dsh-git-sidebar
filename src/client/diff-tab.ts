@@ -428,6 +428,14 @@ function content(
 
 /** One drawn row: its two numbers, its sign, and its text. */
 function drawn(React: DiffReactSurface, row: DiffRow, key: number, extra?: unknown): unknown {
+  if (row.kind === 'file') {
+    return React.createElement('div', {
+      key,
+      className: `${PREFIX}-file`,
+      'data-git-diff-file': row.text,
+      title: row.text,
+    }, row.text)
+  }
   if (row.kind === 'hunk-header') {
     return React.createElement('div', { key, className: `${PREFIX}-hunk` }, row.text, extra)
   }
@@ -690,6 +698,20 @@ export const DIFF_STYLES = `
 }
 .${PREFIX}-context {
   background: transparent;
+}
+.${PREFIX}-file {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 12px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--dsw-alias-bg-layer-2);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
 }
 .${PREFIX}-hunk {
   display: flex;
