@@ -8,7 +8,7 @@
 
 import { stat } from 'node:fs/promises'
 import type {
-  BranchList, CommitEntry, CommitDetailArgs, HistoryArgs, HistoryPage, StashEntry,
+  BranchList, CommitDetailArgs, CommitEntry, CommitRef, HistoryArgs, HistoryPage, StashEntry,
 } from '../shared.ts'
 import type { HostContext, HostSession } from './context.ts'
 import { GitFailure, gitIn } from './git.ts'
@@ -51,7 +51,7 @@ export async function readHistory(
   const limit = clamp(Math.trunc(args.limit), 1, MAX_HISTORY)
   const skip = Number.isFinite(args.skip) && args.skip > 0 ? Math.trunc(args.skip) : 0
   const git = gitIn(ctx, config, session, await topLevel(gitIn(ctx, config, session, directory, signal)), signal)
-  const format = `--format=%H${FIELD}%h${FIELD}%s${FIELD}%an${FIELD}%aI${FIELD}%D${RECORD}`
+  const format = `--format=%H${FIELD}%h${FIELD}%s${FIELD}%an${FIELD}%ae${FIELD}%aI${FIELD}%P${FIELD}%D${RECORD}`
   const log = await git('log', ['log', `--max-count=${limit + 1}`, `--skip=${skip}`, format])
   const records = log.stdout.split(RECORD).filter(record => record.trim().length > 0)
   const hasMore = records.length > limit
@@ -246,18 +246,45 @@ function lines(output: string): string[] {
 
 /** Read one log record into a commit entry. */
 function parseCommit(record: string): CommitEntry {
-  const [sha = '', short = '', subject = '', author = '', when = '', decorations = ''] =
+  const [sha = '', short = '', subject = '', author = '', email = '', when = '', parents = '', decorations = ''] =
     record.split(FIELD)
-  return { sha, short, subject, author, when, refs: refsOf(decorations) }
+  return {
+    sha,
+    short,
+    subject,
+    author,
+    email,
+    when,
+    refs: refsOf(decorations),
+    parents: parents.split(' ').map(name => name.trim()).filter(name => name.length > 0),
+  }
 }
 
-/** Split a `%D` decoration list into ref names, dropping the `HEAD -> ` pointer syntax. */
-function refsOf(decorations: string): string[] {
+/**
+ * Read a `%D` decoration list into typed refs.
+ *
+ * `%D` writes four shapes: `HEAD -> main` for the checked-out branch, `tag: v1`
+ * for a tag, `origin/main` for a remote-tracking branch, and a bare name for any
+ * other local branch. The pointer syntax is stripped; the branch it points at is
+ * the one marked as the head.
+ * @param decorations - the record's decoration field.
+ * @returns the refs in Git's order.
+ */
+function refsOf(decorations: string): CommitRef[] {
   return decorations
     .split(',')
     .map(entry => entry.trim())
     .filter(entry => entry.length > 0)
-    .map(entry => entry.startsWith(DECORATION_PREFIX) ? entry.slice(DECORATION_PREFIX.length) : entry)
+    .map(entry => {
+      if (entry === 'HEAD') return { name: 'HEAD', kind: 'head' as const }
+      if (entry.startsWith(DECORATION_PREFIX)) {
+        return { name: entry.slice(DECORATION_PREFIX.length), kind: 'head' as const }
+      }
+      const tag = 'tag: '
+      if (entry.startsWith(tag)) return { name: entry.slice(tag.length), kind: 'tag' as const }
+      if (entry.includes('/')) return { name: entry, kind: 'remote' as const }
+      return { name: entry, kind: 'local' as const }
+    })
 }
 
 /** Keep a number inside an inclusive range. */

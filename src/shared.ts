@@ -143,6 +143,24 @@ export interface CommitArgs {
   readonly stageAll?: boolean
 }
 
+/** What a decoration on a commit names. */
+export type RefKind =
+  /** A local branch that is currently checked out. */
+  | 'head'
+  /** A local branch that is not checked out. */
+  | 'local'
+  /** A remote-tracking branch. */
+  | 'remote'
+  /** A tag. */
+  | 'tag'
+
+/** One decoration pointing at a commit. */
+export interface CommitRef {
+  /** The name as the row prints it: `main`, `origin/main`, `v1.0`. */
+  readonly name: string
+  readonly kind: RefKind
+}
+
 /** One entry of the commit history. */
 export interface CommitEntry {
   /** Full object name. */
@@ -152,10 +170,14 @@ export interface CommitEntry {
   /** The first line of the message. */
   readonly subject: string
   readonly author: string
+  /** Author e-mail, which the graph uses as a stable identity. */
+  readonly email: string
   /** Author date, ISO 8601. */
   readonly when: string
-  /** Branch, tag, and HEAD decorations pointing at this commit. */
-  readonly refs: readonly string[]
+  /** Decorations pointing at this commit, in Git's own order. */
+  readonly refs: readonly CommitRef[]
+  /** Full object names of this commit's parents, in Git's order. */
+  readonly parents: readonly string[]
 }
 
 /** Arguments of the history page. */
