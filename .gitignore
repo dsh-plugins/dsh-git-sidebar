@@ -1,3 +1,6 @@
 node_modules/
 run/
 *.log
+
+# Internal handover notes: local paths and a review of mistakes, not part of the package.
+HANDOVER.md
