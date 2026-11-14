@@ -1,5 +1,35 @@
 # Git 历史可视化重写：实现规格
 
+## 零、后续重写：紧凑排布 + 长直线折叠（当前实现）
+
+数据仍只有 `parents`（`git log --topo-order --format=%H %P`），布局仍是纯函数 `layoutGraph()`（`src/client/graph-model.ts`）。
+
+### 泳道分配
+
+- 一张 `lanes: (sha|null)[]` 表，下标就是列号；每行把「等待本提交的那条泳道」交给它的第一个父提交，其余泳道原样保留。
+- **新线取最左空位**（不是追加到最右）：一条分支结束后留下的空列会被下一条新线立刻占用。VS Code 是追加到最右并保留重复泳道，这是它越画越宽的主因。
+- **merge 的额外父优先复用已有泳道**；确实需要新列时取**离节点最近的空位**，于是折角只经过空格，不会横跨其它线（旧实现会从节点一路横跨到最右列，就是贯穿屏幕的那条横线）。
+- 尾部空列每行裁剪。
+
+### 长直线折叠（IntelliJ 行为）
+
+- 一条线连续 **`FOLD_AFTER = 5` 行**没有自己的节点时（`src/client/graph-model.ts` 的 `foldLongStretches`），中间的行不再画线，只在两端各留一行、各放一个箭头：上端 `down` 指向下方那个提交，下端 `up` 指回上方那个提交；点击箭头 `scrollIntoView({ block: 'center' })` 跳到目标行。
+- 若下方那个提交还没加载（页尾），箭头带空 `to`，点击等于「加载下一页」。
+- IntelliJ 的门槛是 `LONG_EDGE_SIZE = 30`、两端各留 1 行（`PrintElementGeneratorImpl`，判据 `down-up < size || min(row-up, down-row) <= part`，中间行换成只有箭头的 `TerminalEdgePrintElement`，代码级默认 `isShowLongEdges = false`）；这里降到 5，因为侧栏一屏只有十几行。
+
+### 数据形状与渲染
+
+`GraphRow.segments[].collapsed` 标记被折掉的一段；`GraphRow.arrows[]` 是这一行的箭头（`lane` / `direction` / `to`）。`history.ts` 遇到 `collapsed` 直接跳过，箭头画成三角形 + 透明点击区（`data-git-graph-jump`）。箭头位于行按钮内部，所以行点击先判断目标是不是箭头，是则跳转/加载更多，否则才打开 diff。
+
+### 参考实现（本轮核实过的源码）
+
+- VS Code：`src/vs/workbench/contrib/scm/browser/scmHistory.ts` 的 `toISCMHistoryItemViewModelArray()` / `renderSCMHistoryItemGraph()`——泳道数组、第一父原地替换、汇合丢重复列左移；merge 额外父无脑追加到最右（宽度爆炸来源）；**无折叠**；长横线靠节点背景色描边遮罩（`.graph > circle { stroke: var(--vscode-sideBar-background) }`）。
+- IntelliJ：`GraphLayoutBuilder.kt`（按分支重要性给稳定 `layoutIndex`，行内 x 是排序位次）、`SimpleGraphCellPainter.kt`（只在相邻两行之间斜一次，画直线段而非贝塞尔）、`PrintElementGeneratorImpl.kt`（长边折叠常量与判据）。
+
+---
+
+## 一、第一版规格（保留）
+
 现状：`src/client/history.ts` 是一个扁平列表（短 SHA + subject + 作者 + 时间 + ref 标签），没有图形。
 目标：按 VS Code「源代码管理 → Graph」的形态，重写成**带泳道的提交图**。
 

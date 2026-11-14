@@ -265,6 +265,16 @@ export const PANEL_STYLES = `
   outline-offset: -1px;
 }
 
+.gs-graph-arrow {
+  pointer-events: none;
+}
+
+/* The arrow's click area: invisible, and wide enough to hit without aiming. */
+.gs-graph-jump {
+  fill: transparent;
+  cursor: pointer;
+}
+
 .gs-tool {
   display: inline-flex;
   flex: none;

@@ -41,6 +41,26 @@ export interface GraphLaneSegment {
    *   merge's second and later parents go.
    */
   readonly kind: 'through' | 'up' | 'down' | 'merge-in' | 'merge-out'
+  /**
+   * True when the lane is there but its stretch is folded away.
+   *
+   * A branch can wait hundreds of rows for its next commit, and every row in
+   * between would draw the same vertical line. IntelliJ stops drawing those
+   * stretches and marks the two ends with an arrow; the rows in the middle carry
+   * this flag, so the drawing layer knows the lane exists without covering the
+   * list in parallel lines.
+   */
+  readonly collapsed?: true
+}
+
+/** One end of a folded stretch, and where a click on it goes. */
+export interface GraphArrow {
+  /** The lane whose stretch was folded. */
+  readonly lane: number
+  /** Which way the lane continues past this end; `down` is towards older commits. */
+  readonly direction: 'up' | 'down'
+  /** Object name of the commit at the other end, which is where a click lands. */
+  readonly to: string
 }
 
 /** One row of the graph: a commit, its lane, and every stroke it owns. */
@@ -50,6 +70,8 @@ export interface GraphRow {
   readonly lane: number
   /** Every stroke passing through or turning inside this row. */
   readonly segments: readonly GraphLaneSegment[]
+  /** Ends of folded stretches drawn in this row; absent when none was folded. */
+  readonly arrows?: readonly GraphArrow[]
 }
 
 /** The whole graph: one row per commit, and the width it needs. */
@@ -110,14 +132,20 @@ export function layoutGraph(commits: readonly GraphInput[]): GraphLayout {
       if (target !== undefined) {
         // A lane already waits for this parent, so the merge joins that lane
         // instead of widening the canvas with a second slot for one commit.
-        // The first parent can be this one too, when a history names it twice.
+        // VS Code appends a duplicate lane here and keeps it until the join, which
+        // is the single largest reason its graph grows beyond what the history
+        // needs.
         if (!segments.some(segment => segment.kind === 'merge-out' && segment.lane === target)) {
           segments.push({ lane: target, kind: 'merge-out' })
         }
         continue
       }
-      lanes.push(parent)
-      segments.push({ lane: lanes.length - 1, kind: 'merge-out' })
+      // A new lane goes into the nearest free slot, so the bend leaves the node
+      // towards empty space instead of crossing every line to its right.
+      const free = nearestFree(lanes, lane)
+      if (free >= lanes.length) lanes.push(parent)
+      else lanes[free] = parent
+      segments.push({ lane: free >= lanes.length ? lanes.length - 1 : free, kind: 'merge-out' })
     }
 
     widest = Math.max(widest, lanes.length)
@@ -125,7 +153,134 @@ export function layoutGraph(commits: readonly GraphInput[]): GraphLayout {
     rows.push({ sha: commit.sha, lane, segments })
   }
 
-  return { rows, lanes: widest }
+  return { rows: foldLongStretches(rows), lanes: widest }
+}
+
+/** Whether one row does something on one lane, rather than just passing through it. */
+function hasEvent(row: GraphRow, lane: number): boolean {
+  if (row.lane === lane) return true
+  return row.segments.some(segment => segment.lane === lane && segment.kind !== 'through')
+}
+
+/**
+ * How many rows a lane may pass through before its stretch is folded away.
+ *
+ * The reader asked for five; IntelliJ's own threshold is thirty rows, which suits
+ * a log read in a tall window. Five keeps the drawing honest in a sidebar panel,
+ * where a handful of idle rows is already a third of the visible history.
+ */
+const FOLD_AFTER = 5
+
+/**
+ * Fold the long stretches of a lane into arrows at their two ends.
+ *
+ * A branch tip can wait hundreds of commits before the row that carries it
+ * arrives, and every row in between would draw the same vertical line: those are
+ * the parallel lines that make a graph unreadable. The unit is the stretch a lane
+ * stays occupied, not a pair of its own commits — the row that opens a lane is
+ * usually a merge sitting in a different lane, so looking for two nodes of the
+ * same lane would miss every merge-introduced branch.
+ *
+ * Each stretch keeps the row next to either end, which carries an arrow towards
+ * the event at the other end, and drops the rows in between. A stretch that runs
+ * off the page has no other end to point at, so it is left alone.
+ * @param rows - the laid-out rows, newest first.
+ * @param occupancy - which lanes held a pending commit at each row's edges.
+ * @returns the same rows, with folded stretches marked.
+ */
+function foldLongStretches(
+  rows: readonly GraphRow[],
+): GraphRow[] {
+  /** Folded lane rows, keyed by row index. */
+  const collapsed = new Map<number, number[]>()
+  const arrows = new Map<number, GraphArrow[]>()
+  const addArrow = (index: number, arrow: GraphArrow): void => {
+    const known = arrows.get(index)
+    if (known === undefined) arrows.set(index, [arrow])
+    else known.push(arrow)
+  }
+
+  const width = rows.reduce((most, row) =>
+    Math.max(most, row.lane + 1, ...row.segments.map(segment => segment.lane + 1)), 0)
+  for (let lane = 0; lane < width; lane += 1) {
+    // A row is a plain pass-through for this lane when the lane is drawn but
+    // nothing happens on it.
+    const straight = rows.map(row => row.segments.some(segment =>
+      segment.lane === lane && segment.kind === 'through'))
+    let index = 0
+    while (index < rows.length) {
+      if (straight[index] !== true) {
+        index += 1
+        continue
+      }
+      const from = index
+      while (index < rows.length && straight[index] === true) index += 1
+      const to = index - 1
+      if (to - from + 1 < FOLD_AFTER) continue
+      // The stretch has to be opened by something the lane does: the row before
+      // it is the merge or the node that started waiting. Without that, the line
+      // arrives from above the loaded page and there is nothing to fold towards.
+      const above = rows[from - 1]
+      if (above === undefined || !hasEvent(above, lane)) continue
+      const below = rows[to + 1]
+      const reached = below !== undefined && hasEvent(below, lane)
+      if (!reached) {
+        // The next commit of this lane is below the loaded page, which is exactly
+        // the line that otherwise runs off the bottom of the list. Fold everything
+        // after the first row and let the arrow ask for the page that holds it.
+        for (let hidden = from + 1; hidden <= to; hidden += 1) {
+          const known = collapsed.get(hidden)
+          if (known === undefined) collapsed.set(hidden, [lane])
+          else known.push(lane)
+        }
+        addArrow(from, { lane, direction: 'down', to: '' })
+        continue
+      }
+      for (let hidden = from + 1; hidden <= to - 1; hidden += 1) {
+        const known = collapsed.get(hidden)
+        if (known === undefined) collapsed.set(hidden, [lane])
+        else known.push(lane)
+      }
+      addArrow(from, { lane, direction: 'down', to: below.sha })
+      addArrow(to, { lane, direction: 'up', to: above.sha })
+    }
+  }
+
+  return rows.map((row, index) => {
+    const hidden = collapsed.get(index)
+    const rowArrows = arrows.get(index)
+    const folded = hidden === undefined
+      ? row.segments
+      : row.segments.map((segment): GraphLaneSegment =>
+        segment.kind === 'through' && hidden.includes(segment.lane)
+          ? { ...segment, collapsed: true }
+          : segment)
+    return {
+      ...row,
+      segments: folded,
+      ...rowArrows === undefined ? {} : { arrows: rowArrows },
+    }
+  })
+}
+
+/**
+ * The nearest free lane to one column.
+ *
+ * Probing outwards keeps a merge's bend short: the stroke turns into the empty
+ * column beside the node rather than travelling across every line between the
+ * node and the right edge, which is what makes a merge readable.
+ * @param lanes - the lane table.
+ * @param from - the column to start from.
+ * @returns the free lane index, or the table's length when every slot is taken.
+ */
+function nearestFree(lanes: readonly (string | null)[], from: number): number {
+  for (let distance = 1; distance <= lanes.length; distance += 1) {
+    const left = from - distance
+    if (left >= 0 && lanes[left] === null) return left
+    const right = from + distance
+    if (right < lanes.length && lanes[right] === null) return right
+  }
+  return lanes.length
 }
 
 /**
@@ -143,12 +298,16 @@ function lanesWaiting(lanes: readonly (string | null)[], sha: string): number[] 
 }
 
 /**
- * Take the lane a commit occupies, opening one when no lane awaited it.
+ * Take the lane a commit occupies, opening one only when no lane awaited it.
  *
- * A head no lane waited for is a tip the history starts at, so it opens the
- * next lane. Several lanes waiting for one commit is a fork closing: the
- * leftmost carries the node and the rest are emptied here, which leaves them for
- * the caller to draw as `merge-in` strokes.
+ * A head no lane waited for is a tip the history starts at. VS Code appends it to
+ * the right; this layout instead takes the leftmost free slot, because a hole
+ * left behind by a finished branch is a column of empty space that every row
+ * below pays for. Only when no slot is free does the canvas widen.
+ *
+ * Several lanes waiting for one commit is a fork closing: the leftmost carries
+ * the node and the rest are emptied here, which leaves them for the caller to
+ * draw as `merge-in` strokes.
  * @param lanes - the lane table, mutated in place.
  * @param waiting - the lanes that awaited this commit.
  * @param sha - the commit taking the lane.
@@ -156,12 +315,17 @@ function lanesWaiting(lanes: readonly (string | null)[], sha: string): number[] 
  */
 function reserveLane(lanes: (string | null)[], waiting: readonly number[], sha: string): number {
   const first = waiting[0]
-  if (first === undefined) {
-    lanes.push(sha)
-    return lanes.length - 1
+  if (first !== undefined) {
+    for (const extra of waiting.slice(1)) lanes[extra] = null
+    return first
   }
-  for (const extra of waiting.slice(1)) lanes[extra] = null
-  return first
+  const free = lanes.indexOf(null)
+  if (free >= 0) {
+    lanes[free] = sha
+    return free
+  }
+  lanes.push(sha)
+  return lanes.length - 1
 }
 
 /**

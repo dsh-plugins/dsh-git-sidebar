@@ -19,7 +19,7 @@
 import type { CommitEntry, CommitRef } from '../shared.ts'
 import { DIFF_TAB_KIND, commitDiffAddress } from '../shared.ts'
 import type { ReactLike, TabInfo, Translate } from './api.ts'
-import type { GraphLaneSegment, GraphRow } from './graph-model.ts'
+import type { GraphArrow, GraphLaneSegment, GraphRow } from './graph-model.ts'
 import { layoutGraph } from './graph-model.ts'
 import { Icon } from './icons.ts'
 import { makeProgress } from './progress.ts'
@@ -39,6 +39,10 @@ const ROW_H = 26
 
 /** Radius of the dot a commit is drawn as. */
 const NODE_R = 4
+
+/** Height and width of one fold arrow's mark, in pixels. */
+const ARROW_H = 6
+const ARROW_W = 8
 
 /** The selector a row control is found by, for the arrow keys. */
 const ROW_SELECTOR = '[data-git-history-row]'
@@ -332,7 +336,18 @@ function commitRow(
       className: `${PREFIX}-commit-open`,
       'data-git-history-row': commit.sha,
       title: `${commit.short} ${commit.subject}`,
-      onClick: open,
+      onClick: (event: RowClickEvent) => {
+        // The fold arrows live inside the row's own control, so a click on one has
+        // to be recognised before the row turns it into "open this diff".
+        const target = jumpTargetOf(event)
+        if (target !== undefined) {
+          event.stopPropagation()
+          if (target.kind === 'jump') scrollTo(target.sha)
+          else view.more()
+          return
+        }
+        open()
+      },
     },
     graphSlice(React, row, view.lanes, continuesFromAbove(previous, row.lane)),
     React.createElement('span', { className: `${PREFIX}-sha`, title: commit.sha }, commit.short),
@@ -376,6 +391,49 @@ function commitRow(
 interface MenuEvent {
   readonly currentTarget: MenuAnchor
   stopPropagation(): void
+}
+
+/** The share of a click inside a row this module reads. */
+interface RowClickEvent {
+  readonly target?: unknown
+  stopPropagation(): void
+}
+
+/**
+ * What a click on a fold arrow asks for.
+ *
+ * Two things can be behind an arrow: a commit already on screen, and a commit the
+ * loaded page does not hold yet. The first is a scroll, the second is the next
+ * page — the same distinction the arrow's own direction carries.
+ * @param event - the click, as the row's own handler receives it.
+ * @returns the commit to scroll to, `more` for the next page, or undefined when
+ * the click was not on an arrow.
+ */
+function jumpTargetOf(event: RowClickEvent): { readonly kind: 'jump'; readonly sha: string } | { readonly kind: 'more' } | undefined {
+  const target = event.target as
+    | { closest?: (selector: string) => { getAttribute(name: string): string | null } | null }
+    | null
+    | undefined
+  const hit = target?.closest?.('[data-git-graph-jump]')
+  if (hit === null || hit === undefined) return undefined
+  const sha = hit.getAttribute('data-git-graph-jump')
+  if (typeof sha !== 'string') return undefined
+  return sha.length === 0 ? { kind: 'more' } : { kind: 'jump', sha }
+}
+
+/**
+ * Bring one commit's row to the middle of the list.
+ *
+ * The list loads a page at a time, so the commit a fold points at is normally
+ * already rendered a few rows away; scrolling rather than re-reading keeps the
+ * jump instant and leaves the reader's place in the history intact.
+ * @param sha - the commit to show.
+ */
+function scrollTo(sha: string): void {
+  if (typeof document === 'undefined') return
+  const row = document.querySelector(`[data-git-graph-row="${sha}"]`)
+  if (row === null || typeof row.scrollIntoView !== 'function') return
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' })
 }
 
 /**
@@ -490,6 +548,9 @@ function graphSlice(React: ReactLike, row: GraphRow, lanes: number, above: boole
       style: { stroke: laneColor(segment.lane) },
     }))
   })
+  for (const [index, arrow] of (row.arrows ?? []).entries()) {
+    shapes.push(...arrowShapes(React, arrow, index))
+  }
   shapes.push(React.createElement('circle', {
     key: 'node',
     className: `${PREFIX}-graph-node`,
@@ -497,6 +558,8 @@ function graphSlice(React: ReactLike, row: GraphRow, lanes: number, above: boole
     cx: laneCenter(row.lane),
     cy: ROW_H / 2,
     r: NODE_R,
+    // The node is filled with the row's ink and ringed with the row's own ground,
+    // so a stroke passing behind it reads as interrupted rather than crossed.
     style: { fill: laneColor(row.lane) },
   }))
   return React.createElement('svg', {
@@ -509,6 +572,43 @@ function graphSlice(React: ReactLike, row: GraphRow, lanes: number, above: boole
     'aria-hidden': true,
     focusable: false,
   }, ...shapes)
+}
+
+/**
+ * The two shapes one fold arrow draws: the mark, and the area that takes the click.
+ *
+ * The click lands on the transparent rectangle rather than on the triangle, so the
+ * target is comfortable at 14px wide without making the mark itself look heavy.
+ * @param React - the loader's React.
+ * @param arrow - the end of the folded stretch, and the commit it points at.
+ * @param index - position among this row's arrows, for the render key.
+ * @returns the mark and its hit area.
+ */
+function arrowShapes(React: ReactLike, arrow: GraphArrow, index: number): unknown[] {
+  const x = laneCenter(arrow.lane)
+  const down = arrow.direction === 'down'
+  const tip = down ? ROW_H - 2 : 2
+  const base = down ? tip - ARROW_H : tip + ARROW_H
+  const half = ARROW_W / 2
+  return [
+    React.createElement('path', {
+      key: `arrow:${index}:${arrow.lane}`,
+      className: `${PREFIX}-graph-arrow`,
+      'data-git-graph-arrow': arrow.direction,
+      d: `M${x - half} ${base}L${x} ${tip}L${x + half} ${base}Z`,
+      style: { fill: laneColor(arrow.lane) },
+    }),
+    React.createElement('rect', {
+      key: `jump:${index}:${arrow.lane}`,
+      className: `${PREFIX}-graph-jump`,
+      'data-git-graph-jump': arrow.to,
+      'data-git-graph-jump-direction': arrow.direction,
+      x: x - LANE_W / 2,
+      y: 0,
+      width: LANE_W,
+      height: ROW_H,
+    }),
+  ]
 }
 
 /**
@@ -543,6 +643,10 @@ function continuesFromAbove(previous: GraphRow | undefined, lane: number): boole
  * @returns the `d` attribute, or undefined when the stroke would be a point.
  */
 function segmentPath(segment: GraphLaneSegment, rowLane: number, above: boolean): string | undefined {
+  // A folded stretch draws nothing in the rows it covers: the arrow at each end
+  // is the whole mark, which is what keeps a waiting branch from painting a
+  // parallel line down the entire list.
+  if (segment.collapsed === true) return undefined
   const x = laneCenter(segment.lane)
   const mid = ROW_H / 2
   const quarter = ROW_H / 4
