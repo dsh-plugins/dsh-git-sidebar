@@ -24,6 +24,55 @@ export const PANEL_STYLES = `
   line-height: 1.5;
 }
 
+/*
+ * The refresh bar, copied from VS Code's progressbar: a 2px track whose bit is
+ * 2% wide and sweeps to 4900% of its own width. The track is always drawn and
+ * only the bit hides, so the header below never moves.
+ */
+.gs-progress {
+  box-sizing: border-box;
+  width: 100%;
+  height: 2px;
+  overflow: hidden; /* keep progress bit in bounds */
+  position: relative;
+  flex: none;
+}
+
+.gs-progress-bit {
+  position: absolute;
+  left: 0;
+  width: 2%;
+  height: 2px;
+  display: none;
+  background: var(--dsw-alias-brand-primary);
+}
+
+.gs-progress[data-active] .gs-progress-bit {
+  display: block;
+}
+
+.gs-progress[data-infinite] .gs-progress-bit {
+  animation-name: gs-progress;
+  animation-duration: 4s;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+  transform: translate3d(0, 0, 0);
+}
+
+/*
+ * VS Code switches to steps(100) past ten seconds, which keeps a stuck run from
+ * asking the compositor for every frame.
+ */
+.gs-progress[data-infinite][data-long-running] .gs-progress-bit {
+  animation-timing-function: steps(100);
+}
+
+@keyframes gs-progress {
+  from { transform: translateX(0%) scaleX(1); }
+  50%  { transform: translateX(2500%) scaleX(3); }
+  to   { transform: translateX(4900%) scaleX(1); }
+}
+
 .gs-header {
   display: flex;
   flex: 0 0 auto;
@@ -80,7 +129,7 @@ export const PANEL_STYLES = `
 }
 
 .gs-tool[data-turning] svg {
-  animation: gs-turn 1s linear infinite;
+  animation: gs-spin 1s linear infinite;
 }
 
 .gs-tool:disabled {
@@ -88,7 +137,7 @@ export const PANEL_STYLES = `
   cursor: default;
 }
 
-@keyframes gs-turn {
+@keyframes gs-spin {
   to { transform: rotate(360deg); }
 }
 

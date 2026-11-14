@@ -36,6 +36,10 @@ import { PREFIX } from './styles.ts'
 import { conflictNotice, makeConflictView } from './conflict-view.ts'
 import { rangeBetween, selectionKey, type SelectionKey } from './list-model.ts'
 import type { RowSelectEvent } from './row.ts'
+import {
+  appendHistory, forgetHistory, invalidateSession, rememberStashes, rememberStatus, type PanelCache,
+} from './panel-cache.ts'
+import { makeProgress } from './progress.ts'
 
 /** The panel's runtime facts, fixed for the life of the plugin. */
 export interface PanelRuntime {
@@ -43,6 +47,15 @@ export interface PanelRuntime {
   readonly t: Translate
   /** Read the body's own tab, so a diff opens where the file's tab belongs. */
   readonly tab: (props: TabBodyProps) => TabInfo['tab'] | undefined
+  /**
+   * What the panel remembers between mounts.
+   *
+   * One instance per plugin activation, so a closed and reopened tab renders
+   * what the previous mount already read instead of asking again.
+   */
+  readonly cache: PanelCache
+  /** Drop the cached patches; a refresh is the reader saying the tree moved. */
+  readonly clearDiffCache?: () => void
 }
 
 /** A snapshot to read while nothing has arrived yet. */
@@ -128,52 +141,100 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
   const BranchHeader = makeBranchHeader(React)
   const StashGroup = makeStashGroup(React)
   const History = makeHistory(React)
+  const Progress = makeProgress(React)
+  const cache = runtime.cache
 
   /** The panel: one snapshot, one message, and the writes that change them. */
   function GitPanel(props: TabBodyProps): unknown {
     const sessionId = props.sessionId ?? ''
-    const [snapshot, setSnapshot] = React.useState<StatusSnapshot | undefined>(undefined)
-    const [loading, setLoading] = React.useState(true)
+    // The first render reads the cache, so a reopened tab draws its previous
+    // content immediately instead of a skeleton that resolves a moment later.
+    // `useState` keeps only the first value it is given, so re-reading the cache
+    // on later renders cannot move the panel back to an older snapshot.
+    const cachedStatus = cache.status.get(sessionId)
+    const cachedStashes = cache.stashes.get(sessionId)
+    const [snapshot, setSnapshot] = React.useState<StatusSnapshot | undefined>(cachedStatus)
+    const [loading, setLoading] = React.useState(cachedStatus === undefined)
     const [busy, setBusy] = React.useState(false)
+    const [refreshing, setRefreshing] = React.useState(false)
     const [message, setMessage] = React.useState('')
     const [amend, setAmend] = React.useState(false)
     const [notice, setNotice] = React.useState('')
-    const [stashes, setStashes] = React.useState<readonly StashEntry[]>([])
+    const [stashes, setStashes] = React.useState<readonly StashEntry[]>(cachedStashes ?? [])
     const [historyOpen, setHistoryOpen] = React.useState(true)
     const [conflict, setConflict] = React.useState<OpenConflict | null>(null)
     const [filter, setFilter] = React.useState('')
     const [selected, setSelected] = React.useState<readonly SelectionKey[]>([])
     const [anchor, setAnchor] = React.useState<string | null>(null)
+    // Which read the first paint came from, which is what a test can observe
+    // without counting requests: `hit` means the cache answered.
+    const [cacheState] = React.useState<'hit' | 'miss'>(cachedStatus === undefined ? 'miss' : 'hit')
+    /**
+     * What the history list compares to decide whether to read again.
+     *
+     * It starts at whatever the last write produced, and every invalidating
+     * action bumps it, so the list reads a dropped cache exactly once instead of
+     * on every render of the panel.
+     */
+    const [historyRevision, setHistoryRevision] = React.useState('')
 
-    const load = React.useCallback((): void => {
+    /**
+     * Read the snapshot, through the cache when it is there.
+     *
+     * A hit paints at once and stops: a cache that still asked the Host would
+     * save nothing, since the wait is what the reader notices, not the parse.
+     * @param force - ignore the cache and read the Host.
+     * @returns a promise that settles when the snapshot on screen is current.
+     */
+    const load = React.useCallback(async (force = false): Promise<void> => {
       if (sessionId === '') {
         setLoading(false)
         return
       }
+      const cached = force ? undefined : cache.status.get(sessionId)
+      if (cached !== undefined) {
+        setSnapshot(cached)
+        setLoading(false)
+        return
+      }
       setLoading(true)
-      void runtime.api.ready
+      await runtime.api.ready
         .then(api => api.status(sessionId))
         .catch((error: unknown) => unavailableSnapshot(messageOf(error), 'failed'))
         .then((next) => {
+          rememberStatus(cache, sessionId, next)
           setSnapshot(next)
           setLoading(false)
         })
     }, [sessionId])
 
     React.useEffect(() => {
-      load()
+      void load()
     }, [load])
 
-    const loadStashes = React.useCallback((): void => {
+    /**
+     * Read the stash entries, through the cache when it is there.
+     * @param force - ignore the cache and read the Host.
+     * @returns a promise that settles when the list on screen is current.
+     */
+    const loadStashes = React.useCallback(async (force = false): Promise<void> => {
       if (sessionId === '') return
-      void runtime.api.ready
+      const cached = force ? undefined : cache.stashes.get(sessionId)
+      if (cached !== undefined) {
+        setStashes(cached)
+        return
+      }
+      await runtime.api.ready
         .then(api => api.stashes(sessionId))
         .catch(() => [] as readonly StashEntry[])
-        .then(setStashes)
+        .then((entries) => {
+          rememberStashes(cache, sessionId, entries)
+          setStashes(entries)
+        })
     }, [sessionId])
 
     React.useEffect(() => {
-      loadStashes()
+      void loadStashes()
     }, [loadStashes])
 
     const current = (): StatusSnapshot => snapshot ?? EMPTY_SNAPSHOT
@@ -199,7 +260,50 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         .catch(() => EMPTY_PAGE),
     }
 
-    const write = (action: () => Promise<WriteOutcome>, failure: string): void => {
+    /**
+     * Read the history page, caching the first one and extending it after that.
+     *
+     * The page a reader already saw is the page they expect to see again, and a
+     * commit invalidates it explicitly, so nothing here has to guess when the
+     * log moved.
+     */
+    const readHistory = (limit: number, skip: number): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean }> => {
+      const cached = cache.history.get(sessionId)
+      if (cached !== undefined && skip === 0) return Promise.resolve(cached)
+      return calls.history(limit, skip).then((page) => {
+        if (skip === 0) {
+          appendHistory(cache, sessionId, { commits: page.commits, hasMore: page.hasMore })
+          return page
+        }
+        const committed = cached === undefined
+          ? { commits: page.commits, hasMore: page.hasMore }
+          : { commits: [...cached.commits, ...page.commits], hasMore: page.hasMore }
+        appendHistory(cache, sessionId, committed)
+        return committed
+      })
+    }
+
+    /**
+     * Drop the cached history and make the list read it once more.
+     *
+     * A commit moves the head, a checkout moves the branch, and a stash moves
+     * work out of the tree: all three change the newest rows of the log, so the
+     * page the list is showing is wrong for exactly as long as it takes the
+     * reader to scroll it. The revision is what the list watches.
+     */
+    const dropHistory = (): void => {
+      forgetHistory(cache, sessionId)
+      setHistoryRevision(`${Date.now()}:${Math.random()}`)
+    }
+
+    /**
+     * Run one write and settle the panel from its reply.
+     * @param action - the Host call.
+     * @param failure - the sentence to show when the Host gives no reason.
+     * @param movesLog - whether the write changes the newest rows of the log,
+     * which is what makes the cached history page stale.
+     */
+    const write = (action: () => Promise<WriteOutcome>, failure: string, movesLog = false): void => {
       setNotice('')
       setBusy(true)
       void action()
@@ -207,8 +311,12 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         .then((outcome) => {
           setBusy(false)
           if (outcome.ok) {
+            // The write already answered with the new snapshot, so the cache is
+            // updated from that reply rather than by asking again.
+            rememberStatus(cache, sessionId, outcome.snapshot)
             setSnapshot(outcome.snapshot)
-            loadStashes()
+            loadStashes(true)
+            if (movesLog) dropHistory()
             return
           }
           const text = refusalText(t, outcome.problem, outcome.message, failure)
@@ -220,10 +328,22 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         })
     }
 
+    /**
+     * Throw the Session's cache away and read everything again.
+     *
+     * This is the one forced read: every other path either has a fresh answer in
+     * hand (a write) or is content with what the cache holds.
+     */
     const refresh = (): void => {
       setNotice('')
-      load()
-      loadStashes()
+      setRefreshing(true)
+      invalidateSession(cache, sessionId)
+      runtime.clearDiffCache?.()
+      // Both reads are awaited, so the bar lasts exactly as long as the work the
+      // reader asked for. A cache hit cannot happen here: the entry was just
+      // deleted, so both calls go to the Host.
+      void Promise.all([load(true), loadStashes(true)])
+        .finally(() => { setRefreshing(false) })
     }
 
     /**
@@ -263,7 +383,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     }
 
     const stashCurrent = (): void => {
-      write(() => calls.stash(), t('notice.stashFailed'))
+      write(() => calls.stash(), t('notice.stashFailed'), true)
     }
     const stashApply = (index: number): void => {
       write(() => calls.stashApply(index, false), t('notice.stashApplyFailed'))
@@ -276,10 +396,10 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     }
 
     const checkout = (branch: string): void => {
-      write(() => calls.checkout(branch), t('notice.checkoutFailed'))
+      write(() => calls.checkout(branch), t('notice.checkoutFailed'), true)
     }
     const createBranch = (name: string): void => {
-      write(() => calls.createBranch(name), t('notice.createBranchFailed'))
+      write(() => calls.createBranch(name), t('notice.createBranchFailed'), true)
     }
     const sync = (action: SyncAction): void => {
       if (action !== 'fetch' && !confirmSync(t, action, current().upstream?.name ?? null)) return
@@ -290,8 +410,11 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         .then((outcome) => {
           setBusy(false)
           if (outcome.ok) {
+            rememberStatus(cache, sessionId, outcome.snapshot)
             setSnapshot(outcome.snapshot)
             setNotice(t('notice.syncDone', { action: t(`sync.${action}`) }))
+            // A pull moves the branch the log hangs from, so the page is stale.
+            dropHistory()
             return
           }
           setNotice(refusalText(t, outcome.problem, outcome.message, t('notice.syncFailed')))
@@ -336,7 +459,10 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
             setNotice(text)
             return
           }
-          if (outcome.ok) setSnapshot(outcome.snapshot)
+          if (outcome.ok) {
+            rememberStatus(cache, sessionId, outcome.snapshot)
+            setSnapshot(outcome.snapshot)
+          }
           setConflict(null)
         })
     }
@@ -358,7 +484,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         .then(async (outcome) => {
           if (outcome.ok) {
             setBusy(false)
+            rememberStatus(cache, sessionId, outcome.snapshot)
             setSnapshot(outcome.snapshot)
+            dropHistory()
             return
           }
           if (outcome.problem !== 'unmerged') {
@@ -379,7 +507,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     /** Merge one branch; a conflict leaves the merge in progress for the conflict view. */
     const merge = (branch: string): void => {
       if (!confirmMerge(t, branch, current().branch ?? null)) return
-      write(() => runtime.api.ready.then(api => api.mergeBranch(sessionId, branch)), t('notice.mergeFailed'))
+      write(() => runtime.api.ready.then(api => api.mergeBranch(sessionId, branch)), t('notice.mergeFailed'), true)
     }
 
     /**
@@ -400,9 +528,12 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
             setNotice(outcome.message)
             return
           }
+          rememberStatus(cache, sessionId, outcome.snapshot)
           setSnapshot(outcome.snapshot)
           setMessage('')
           setAmend(false)
+          // A commit is the newest row of the log, so the cached page is stale.
+          dropHistory()
         })
     }
 
@@ -477,10 +608,12 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const historyElement = (): unknown => React.createElement(History, {
       open: historyOpen,
       t,
-      load: calls.history,
+      load: readHistory,
       tab,
-      // A commit changes the newest entry, so the list is read again after one.
-      revision: snapshot?.commit ?? '',
+      // A commit changes the newest entry, and the cached page was dropped when
+      // that happened, so the revision is only what the head shows: the list
+      // itself reads from the cache until a write invalidates it.
+      revision: historyRevision,
       onToggle: () => { setHistoryOpen(!historyOpen) },
       // The history head keeps the panel's own refresh, so a reader reading the
       // graph can ask for a new snapshot without scrolling back up.
@@ -673,6 +806,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       return React.createElement('section', {
         className: `${PREFIX}-root`,
         'data-git-panel': '',
+        'data-git-cache': cacheState,
         ...busy ? { 'data-git-busy': '' } : {},
       },
       React.createElement(BranchHeader, headerProps()),
@@ -687,6 +821,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       return React.createElement('section', {
         className: `${PREFIX}-root`,
         'data-git-panel': '',
+        'data-git-cache': cacheState,
         'data-problem': problem,
       },
       React.createElement(BranchHeader, headerProps()),
@@ -703,6 +838,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       return React.createElement('section', {
         className: `${PREFIX}-root`,
         'data-git-panel': '',
+        'data-git-cache': cacheState,
         ...busy ? { 'data-git-busy': '' } : {},
       },
       React.createElement(BranchHeader, headerProps()),
@@ -730,6 +866,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     return React.createElement('section', {
       className: `${PREFIX}-root`,
       'data-git-panel': '',
+      'data-git-cache': cacheState,
       ...busy ? { 'data-git-busy': '' } : {},
     },
       React.createElement(BranchHeader, headerProps()),

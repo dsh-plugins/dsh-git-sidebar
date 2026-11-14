@@ -81,6 +81,15 @@ export interface HistoryProps {
   onToggle(): void
   /** Re-read the panel's snapshot; absent when the panel offers no refresh. */
   onRefresh?(): void
+  /**
+   * The page this Session already read, when the panel's cache holds one.
+   *
+   * A reopened tab draws these rows straight away instead of asking again; the
+   * rows are replaced as soon as `load` answers anything.
+   */
+  readonly initial?: { readonly commits: readonly CommitEntry[]; readonly hasMore: boolean }
+  /** Store a page the list just read, so the next mount can draw it. */
+  readonly remember?: (page: { commits: readonly CommitEntry[]; hasMore: boolean }) => void
 }
 
 /**
@@ -91,14 +100,23 @@ export interface HistoryProps {
 export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown {
   return function History(props: HistoryProps): unknown {
     const { t, open } = props
-    const [commits, setCommits] = React.useState<readonly CommitEntry[]>([])
-    const [hasMore, setHasMore] = React.useState(false)
+    const [commits, setCommits] = React.useState<readonly CommitEntry[]>(props.initial?.commits ?? [])
+    const [hasMore, setHasMore] = React.useState(props.initial?.hasMore ?? false)
     const [loading, setLoading] = React.useState(false)
     const [failed, setFailed] = React.useState(false)
     // A scroll can fire several times before the first request settles, and a
     // refresh can land on top of a page still in flight. One cell holds the
     // answer so two requests can never be appended twice.
     const [gate] = React.useState<{ reading: boolean }>({ reading: false })
+    /**
+     * Whether this mount has read anything yet.
+     *
+     * A cached page makes the first render complete, so the effect below must
+     * not read again on mount — that is exactly the request the cache exists to
+     * avoid. A refresh clears the cache and bumps the revision, which is what
+     * re-arms this cell.
+     */
+    const [armed] = React.useState<{ read: boolean }>({ read: props.initial === undefined })
 
     const asked = commits.length
 
@@ -109,7 +127,11 @@ export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown 
       setFailed(false)
       void props.load(PAGE, skip)
         .then((page) => {
-          setCommits(previous => skip === 0 ? page.commits : [...previous, ...page.commits])
+          setCommits((previous) => {
+            const next = skip === 0 ? page.commits : [...previous, ...page.commits]
+            props.remember?.({ commits: next, hasMore: page.hasMore })
+            return next
+          })
           setHasMore(page.hasMore)
           setLoading(false)
         })
@@ -122,6 +144,10 @@ export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown 
 
     React.useEffect(() => {
       if (!open) return
+      if (!armed.read) {
+        armed.read = true
+        return
+      }
       read(0)
     }, [open, props.revision])
 

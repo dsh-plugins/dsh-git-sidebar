@@ -26,6 +26,8 @@ import {
 import { DIFF_DICTS, DIFF_LOCALE_NS, DIFF_STYLES, DIFF_TAB_DEFINITION, makeDiffBody } from './client/diff-tab.ts'
 import { GitGuideIcon } from './client/icons.ts'
 import { makePanel } from './client/panel.ts'
+import { createPanelCache } from './client/panel-cache.ts'
+import { clearDiffCache } from './client/diff-cache.ts'
 import { PANEL_STYLES } from './client/styles.ts'
 
 /** This package's identity in the loader's module table and on the Remote contribution. */
@@ -369,6 +371,9 @@ loader.load({
           ? { ready: Promise.reject(new Error('git-sidebar: zod is unavailable')) }
           : mountGitRemote(ctx, zod)
         void remote.ready.catch(() => undefined)
+        // The panel's read-through cache lives as long as this activation, which
+        // is what lets a closed and reopened tab paint without asking again.
+        const panelCache = createPanelCache()
         // Stage one: what the panel's tab type is, plus its Start-page button.
         // A page type names no resource patterns and is opened by kind.
         ctx.effect(() => ctx.sidebarRightTabs.register({
@@ -390,6 +395,10 @@ loader.load({
           api: remote,
           t,
           tab: (props: TabBodyProps) => (props.useTabInfo === undefined ? undefined : props.useTabInfo().tab),
+          // One cache per activation: closing the panel tab unmounts its body,
+          // and the next mount is what has to read this instead of the Host.
+          cache: panelCache,
+          clearDiffCache,
         })
 
         // Stage two: the panel body under the type's id.
