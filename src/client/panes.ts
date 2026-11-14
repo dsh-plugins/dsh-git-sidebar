@@ -203,6 +203,8 @@ export interface PaneProps {
   readonly title: string
   readonly size: number
   readonly collapsed: boolean
+  /** Whether this region takes the room the others leave unused. */
+  readonly grow?: boolean
   readonly t: Translate
   /** What the region holds; drawn only while it is expanded. */
   readonly content: unknown
@@ -227,7 +229,11 @@ export function gitPane(React: ReactLike, props: PaneProps): unknown {
     'data-git-pane': id,
     'data-git-pane-size': String(size),
     'data-collapsed': collapsed ? '' : undefined,
-    style: collapsed ? undefined : { flex: `0 0 ${size}px` },
+    style: collapsed ? undefined : {
+      flexGrow: props.grow === true ? 1 : 0,
+      flexShrink: 0,
+      flexBasis: `${size}px`,
+    },
   },
   React.createElement('div', {
     className: `${PREFIX}-pane-resize`,

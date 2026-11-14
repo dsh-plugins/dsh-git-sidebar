@@ -96,7 +96,7 @@ export interface HistoryProps {
   readonly open: boolean
   readonly t: Translate
   /** One page, from the offset the section asks for. */
-  load(limit: number, skip: number): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean }>
+  load(limit: number, skip: number): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean; total: number }>
   /** The panel's tab, so a commit opens where the panel sits. */
   readonly tab: TabInfo['tab'] | undefined
   /** Changes whenever the newest commit might have changed, which re-reads the first page. */
@@ -110,9 +110,9 @@ export interface HistoryProps {
    * A reopened tab draws these rows straight away instead of asking again; the
    * rows are replaced as soon as `load` answers anything.
    */
-  readonly initial?: { readonly commits: readonly CommitEntry[]; readonly hasMore: boolean }
+  readonly initial?: { readonly commits: readonly CommitEntry[]; readonly hasMore: boolean; readonly total: number }
   /** Store a page the list just read, so the next mount can draw it. */
-  readonly remember?: (page: { commits: readonly CommitEntry[]; hasMore: boolean }) => void
+  readonly remember?: (page: { commits: readonly CommitEntry[]; hasMore: boolean; total: number }) => void
   /** Check out one commit, leaving the branch and landing on a detached head. */
   onCheckout?(sha: string): void
   /** Create a branch starting at one commit. */
@@ -132,6 +132,7 @@ export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown 
     const { t, open } = props
     const [commits, setCommits] = React.useState<readonly CommitEntry[]>(props.initial?.commits ?? [])
     const [hasMore, setHasMore] = React.useState(props.initial?.hasMore ?? false)
+    const [total, setTotal] = React.useState(props.initial?.total ?? 0)
     const [loading, setLoading] = React.useState(false)
     const [failed, setFailed] = React.useState(false)
     // A scroll can fire several times before the first request settles, and a
@@ -159,10 +160,11 @@ export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown 
         .then((page) => {
           setCommits((previous) => {
             const next = skip === 0 ? page.commits : [...previous, ...page.commits]
-            props.remember?.({ commits: next, hasMore: page.hasMore })
+            props.remember?.({ commits: next, hasMore: page.hasMore, total: page.total })
             return next
           })
           setHasMore(page.hasMore)
+      setTotal(page.total)
           setLoading(false)
         })
         .catch(() => {
@@ -254,7 +256,7 @@ export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown 
       commits.length === 0
         ? null
         : React.createElement('span', { className: `${PREFIX}-history-count` },
-          t('history.count', { count: commits.length })),
+          t('history.count', { count: total > 0 ? total : commits.length })),
       props.onRefresh === undefined ? null : React.createElement('button', {
         type: 'button',
         className: `${PREFIX}-tool ${PREFIX}-history-refresh`,

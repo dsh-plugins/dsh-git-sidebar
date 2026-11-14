@@ -349,9 +349,9 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
       try {
         const result = await remote.history({ sessionId, limit, skip })
         if (result.ok) return result.value
-        return { commits: [], hasMore: false }
+        return { commits: [], hasMore: false, total: 0 }
       } catch {
-        return { commits: [], hasMore: false }
+        return { commits: [], hasMore: false, total: 0 }
       }
     },
     async requestCommit(args: CommitDetailArgs, signal?: AbortSignal): Promise<DiffPayload> {

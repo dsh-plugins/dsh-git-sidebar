@@ -60,7 +60,11 @@ export async function readHistory(
   const records = log.stdout.split(RECORD).filter(record => record.trim().length > 0)
   const hasMore = records.length > limit
   const commits = records.slice(0, limit).map(parseCommit)
-  return { commits, hasMore }
+  // The header names how long the history is, not how much of it has been read,
+  // so the count comes from Git. A repository with no commits reports zero.
+  const counted = await git('rev-list', ['rev-list', '--count', 'HEAD'], [0, 128])
+  const parsed = counted.exitCode === 0 ? Number.parseInt(counted.stdout.trim(), 10) : 0
+  return { commits, hasMore, total: Number.isFinite(parsed) ? parsed : 0 }
 }
 
 /**

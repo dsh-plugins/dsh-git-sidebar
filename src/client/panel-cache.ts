@@ -20,6 +20,8 @@ import type { CommitEntry, StashEntry, StatusSnapshot } from '../shared.ts'
 export interface CachedHistory {
   readonly commits: readonly CommitEntry[]
   readonly hasMore: boolean
+  /** Every commit reachable from HEAD, so the header keeps naming the length. */
+  readonly total: number
 }
 
 /** What the panel remembers between mounts and between Sessions. */

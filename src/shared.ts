@@ -304,6 +304,8 @@ export interface HistoryArgs {
 export interface HistoryPage {
   readonly commits: readonly CommitEntry[]
   readonly hasMore: boolean
+  /** Every commit reachable from HEAD, which is the length the header names. */
+  readonly total: number
 }
 
 /** Arguments of one commit's own diff. */

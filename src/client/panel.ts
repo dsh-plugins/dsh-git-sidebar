@@ -79,7 +79,7 @@ const EMPTY_SNAPSHOT: StatusSnapshot = {
 const EMPTY_BRANCHES: BranchList = { current: null, local: [], remote: [] }
 
 /** What the history shows when the page could not be read at all. */
-const EMPTY_PAGE: { commits: readonly CommitEntry[]; hasMore: boolean } = { commits: [], hasMore: false }
+const EMPTY_PAGE: { commits: readonly CommitEntry[]; hasMore: boolean; total: number } = { commits: [], hasMore: false, total: 0 }
 
 /** What the repository picker shows when the scan could not run at all. */
 const EMPTY_REPOS: RepositoryList = {
@@ -157,7 +157,7 @@ interface SessionCalls {
   stashApply(index: number, drop: boolean): Promise<WriteOutcome>
   stashDrop(index: number): Promise<WriteOutcome>
   sync(action: SyncAction): Promise<WriteOutcome>
-  history(limit: number, skip: number): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean }>
+  history(limit: number, skip: number): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean; total: number }>
   repositories(): Promise<RepositoryList>
   selectRepository(root?: string): Promise<SelectOutcome>
 }
@@ -328,7 +328,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * commit invalidates it explicitly, so nothing here has to guess when the
      * log moved.
      */
-    const readHistory = (limit: number, skip: number): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean }> => {
+    const readHistory = (limit: number, skip: number): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean; total: number }> => {
       const cached = cache.history.get(sessionId)
       if (cached !== undefined && skip === 0) return Promise.resolve(cached)
       return calls.history(limit, skip).then((page) => {
@@ -336,12 +336,13 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         // caller asked for one page and appends it itself. Returning the merged
         // list here would make the two accumulations compound.
         if (skip === 0) {
-          appendHistory(cache, sessionId, { commits: page.commits, hasMore: page.hasMore })
+          appendHistory(cache, sessionId, { commits: page.commits, hasMore: page.hasMore, total: page.total })
           return page
         }
         appendHistory(cache, sessionId, {
           commits: [...(cached?.commits ?? []), ...page.commits],
           hasMore: page.hasMore,
+        total: page.total,
         })
         return page
       })
@@ -930,48 +931,6 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       drag.stop = undefined
     }, [])
 
-    /**
-     * Give the room the three regions leave unused to the history.
-     *
-     * The heights are the reader's, so a short window scrolls the column; a tall
-     * one would leave a band of nothing under the last region, which reads as a
-     * list that failed to load the rest of its rows. The history is the region
-     * that can use the room, and rounding it to whole rows keeps the last row
-     * whole while leaving at most one row of slack.
-     */
-    const fitHistory = (): void => {
-      if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return
-      const column = document.querySelector(`.${PREFIX}-panes`)
-      if (column === null) return
-      let above = 0
-      for (const region of Array.from(column.children)) {
-        if (region.getAttribute('data-git-pane') === 'history') continue
-        above += region.getBoundingClientRect().height
-      }
-      const available = Math.round(column.clientHeight - above)
-      if (available < PANE_MIN) return
-      setPaneSizes((previous) => {
-        const fitted = snapPaneSize('history', available, ROW_H, HISTORY_CHROME_H)
-        return fitted === previous.history ? previous : { ...previous, history: fitted }
-      })
-    }
-
-    // Folding a region frees room and unfolding takes it back, so the history is
-    // refitted whenever a fold changes; a window resize changes the room too, and
-    // the first fit has to wait for the snapshot that draws the regions at all.
-    // A drag of the regions above also changes what is left, and refitting there
-    // is a no-op for a history drag, because that one only moves room between two
-    // regions and leaves the total unchanged.
-    React.useEffect(() => {
-      fitHistory()
-      if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
-      const onResize = (): void => { fitHistory() }
-      window.addEventListener('resize', onResize)
-      return () => { window.removeEventListener('resize', onResize) }
-    }, [
-      collapsedPanes.changes, collapsedPanes.commit, collapsedPanes.history,
-      paneSizes.changes, paneSizes.commit, snapshot,
-    ])
 
     /**
      * One region of the body: its handle, its title, and what it holds.
@@ -985,6 +944,10 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       title,
       size: paneSizes[id],
       collapsed: collapsedPanes[id],
+      // The change list is the region that can always use more room, so it takes
+      // whatever the other two leave: folding the history hands its height back to
+      // the list instead of leaving a band of nothing under the last region.
+      grow: id === 'changes',
       t,
       content,
       onToggle: () => { togglePane(id) },
@@ -1091,7 +1054,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       // The cached page this Session already read: a reopened tab draws these
       // rows on its first render instead of asking the Host again.
       initial: cache.history.get(sessionId),
-      remember: (page: { commits: readonly CommitEntry[]; hasMore: boolean }) => {
+      remember: (page: { commits: readonly CommitEntry[]; hasMore: boolean; total: number }) => {
         appendHistory(cache, sessionId, page)
         setRecent(subjectsOf(page))
       },
