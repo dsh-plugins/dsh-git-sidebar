@@ -35,12 +35,19 @@ export interface ToolCardProps {
 /** What the rows do beyond drawing. */
 export interface ToolCardDeps {
   readonly t: Translate
-  /** Bring the panel up: clear what belongs to another checkout, then open the tab. */
-  openPanel(): void
+  /**
+   * Bring the panel up: clear what belongs to another checkout, then open the tab.
+   * @returns true when the tab was asked for; false when no Session is on screen
+   * yet, which leaves the call unclaimed so a later render can try again.
+   */
+  openPanel(): boolean
 }
 
 /** Call ids whose panel has already been opened, so a replay does not open it again. */
 const opened = new Set<string>()
+
+/** How many call ids the claim set remembers before it is emptied. */
+const MAX_CLAIMS = 200
 
 /**
  * Build the row for one tool name.
@@ -60,8 +67,13 @@ export function makeGitToolRow(
     React.useEffect(() => {
       if (kind !== 'open' || props.phase !== 'result') return
       if (opened.has(props.callId)) return
+      // The plan review opens the same way: a component effect asks the
+      // navigation controller for its tab, and the controller refuses while no
+      // Session is on screen. Leaving the call unclaimed is what lets the render
+      // that brings a Conversation back open the panel.
+      if (!openPanel()) return
+      if (opened.size >= MAX_CLAIMS) opened.clear()
       opened.add(props.callId)
-      openPanel()
     }, [props.callId, props.phase])
 
     const settled = props.phase === 'result'

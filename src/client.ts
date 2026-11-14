@@ -540,10 +540,17 @@ loader.load({
         // The tools' own conversation rows. A Host tool cannot open a tab by
         // itself, so the row for the opening tool is where the panel reaches the
         // screen: it clears what belongs to the checkout the reader left, then
-        // asks the navigation controller for the panel's tab.
-        const openPanel = (): void => {
-          invalidateAll(panelCache)
-          ctx.sidebarRight.openTab(PANEL_TAB_KIND)
+        // asks the navigation controller for the panel's tab. The controller
+        // throws while no Session is on the screen, which the row reports back so
+        // the call stays openable by a later render.
+        const openPanel = (): boolean => {
+          try {
+            invalidateAll(panelCache)
+            ctx.sidebarRight.openTab(PANEL_TAB_KIND)
+            return true
+          } catch {
+            return false
+          }
         }
         const toolDeps = { t, openPanel }
         const OpenRow = makeGitToolRow(React, toolDeps, 'open')
