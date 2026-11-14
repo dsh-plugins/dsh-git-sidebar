@@ -139,6 +139,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const [stashes, setStashes] = React.useState<readonly StashEntry[]>([])
     const [historyOpen, setHistoryOpen] = React.useState(true)
     const [conflict, setConflict] = React.useState<OpenConflict | null>(null)
+    const [filter, setFilter] = React.useState('')
 
     const load = React.useCallback((): void => {
       if (sessionId === '') {
@@ -469,6 +470,23 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const ConflictView = makeConflictView(React)
 
     /**
+     * The entries the list draws, in the order the filter leaves them.
+     *
+     * The filter narrows the drawing only: the group actions keep using the
+     * snapshot, because a hidden file the reader meant to keep must not become
+     * the victim of "stage all" being told a shorter list.
+     * @param entries - the group's entries.
+     * @param staged - which group the entries come from, for the count.
+     * @returns the entries to render.
+     */
+    const visible = (entries: readonly ChangeEntry[], staged: boolean): ChangeEntry[] => {
+      void staged
+      const needle = filter.trim().toLowerCase()
+      if (needle === '') return [...entries]
+      return entries.filter(entry => entry.path.toLowerCase().includes(needle))
+    }
+
+    /**
      * The change list, replaced by the conflict view while a conflicted file is
      * open: resolving one region needs its two sides on screen, which the list
      * has no room for.
@@ -488,11 +506,21 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       }
       return React.createElement('div', { className: `${PREFIX}-body` },
         notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
+        React.createElement('input', {
+          type: 'search',
+          className: `${PREFIX}-filter`,
+          'data-git-filter': '',
+          value: filter,
+          placeholder: t('list.filter'),
+          'aria-label': t('list.filter'),
+          spellCheck: false,
+          onChange: (event: { target: { value: string } }) => { setFilter(event.target.value) },
+        }),
         changeGroup(React, {
           title: t('group.staged'),
           group: 'staged',
           count: snapshotNow.staged.length,
-          rows: snapshotNow.staged.map(entry => React.createElement(FileRow, {
+          rows: visible(snapshotNow.staged, true).map(entry => React.createElement(FileRow, {
             key: `staged:${entry.path}`,
             entry,
             actions: rowActions(entry, true, false),
@@ -517,7 +545,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
           title: t('group.changes'),
           group: 'unstaged',
           count: snapshotNow.unstaged.length,
-          rows: snapshotNow.unstaged.map(entry => React.createElement(FileRow, {
+          rows: visible(snapshotNow.unstaged, false).map(entry => React.createElement(FileRow, {
             key: `changes:${entry.path}`,
             entry,
             actions: rowActions(entry, false, false),

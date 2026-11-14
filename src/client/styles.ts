@@ -444,6 +444,25 @@ export const PANEL_STYLES = `
   outline-offset: 2px;
 }
 
+.gs-filter {
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 4px 0 6px;
+  padding: 4px 8px;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+  outline: none;
+}
+
+.gs-filter:focus {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
 .gs-notice {
   margin: 4px 8px 0;
   padding: 6px 8px;
