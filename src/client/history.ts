@@ -44,19 +44,27 @@ const ROW_SELECTOR = '[data-git-history-row]'
  *
  * Eight inks mixed from the shell's own tokens rather than written as hex, so
  * both themes keep their contrast: the severities are tuned per theme already,
- * and a mix of two of them stays inside the same gamut. Warm and cool alternate
- * so two neighbouring lanes never look alike, since neighbours are what a reader
- * compares while following one branch.
+ * and a mix of two of them stays inside the same gamut.
+ *
+ * The first entry is deliberately the brand ink, which reads as near-white in
+ * the dark theme and as near-black in the light one. That is the lane the
+ * checked-out branch sits in, and a neutral line is what makes the coloured
+ * branches beside it legible — a coloured trunk would compete with them.
+ *
+ * The rest are ordered for hue separation rather than for convenience: amber,
+ * green, magenta, blue, yellow-green, red, teal. Mixing two neighbouring
+ * severities covers the gaps the five token inks leave, so no two lanes land on
+ * the same hue.
  */
 const LANE_COLORS: readonly string[] = [
   'var(--dsw-alias-brand-primary)',
-  'var(--dsw-alias-state-business-primary)',
-  'var(--dsw-alias-state-success-primary)',
   'var(--dsw-alias-state-warn-primary)',
+  'var(--dsw-alias-state-success-primary)',
+  'color-mix(in srgb, var(--dsw-alias-state-business-primary) 50%, var(--dsw-alias-state-error-primary))',
+  'var(--dsw-alias-state-business-primary)',
+  'color-mix(in srgb, var(--dsw-alias-state-success-primary) 50%, var(--dsw-alias-state-warn-primary))',
   'var(--dsw-alias-state-error-primary)',
-  'color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, var(--dsw-alias-state-success-primary))',
-  'color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-state-error-primary))',
-  'color-mix(in srgb, var(--dsw-alias-state-warn-primary) 50%, var(--dsw-alias-state-business-primary))',
+  'color-mix(in srgb, var(--dsw-alias-state-business-primary) 60%, var(--dsw-alias-state-success-primary))',
 ]
 
 /** Props of the history section. */
