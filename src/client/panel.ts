@@ -34,6 +34,8 @@ import { makeFileRow, type RowAction } from './row.ts'
 import { makeStashGroup, type StashProps } from './stash-group.ts'
 import { PREFIX } from './styles.ts'
 import { conflictNotice, makeConflictView } from './conflict-view.ts'
+import { rangeBetween, selectionKey, type SelectionKey } from './list-model.ts'
+import type { RowSelectEvent } from './row.ts'
 
 /** The panel's runtime facts, fixed for the life of the plugin. */
 export interface PanelRuntime {
@@ -140,6 +142,8 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const [historyOpen, setHistoryOpen] = React.useState(true)
     const [conflict, setConflict] = React.useState<OpenConflict | null>(null)
     const [filter, setFilter] = React.useState('')
+    const [selected, setSelected] = React.useState<readonly SelectionKey[]>([])
+    const [anchor, setAnchor] = React.useState<string | null>(null)
 
     const load = React.useCallback((): void => {
       if (sessionId === '') {
@@ -222,21 +226,34 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       loadStashes()
     }
 
-    const stageAll = (): void => {
-      const paths = current().unstaged.map(entry => entry.path)
-      if (paths.length > 0) write(() => calls.stage(paths), t('notice.stageFailed'))
+    /**
+     * Stage the given paths, or the whole unstaged group when none are given.
+     * @param paths - the paths the group action applies to.
+     */
+    const stagePaths = (paths: readonly string[]): void => {
+      const wanted = paths.length > 0 ? [...paths] : current().unstaged.map(entry => entry.path)
+      if (wanted.length === 0) return
+      clearSelection()
+      write(() => calls.stage(wanted), t('notice.stageFailed'))
     }
-    const unstageAll = (): void => {
-      const paths = current().staged.map(entry => entry.path)
-      if (paths.length > 0) write(() => calls.unstage(paths), t('notice.unstageFailed'))
+    const unstagePaths = (paths: readonly string[]): void => {
+      const wanted = paths.length > 0 ? [...paths] : current().staged.map(entry => entry.path)
+      if (wanted.length === 0) return
+      clearSelection()
+      write(() => calls.unstage(wanted), t('notice.unstageFailed'))
     }
-    const discardUnstaged = (): void => {
-      const entries = current().unstaged
+    /**
+     * Discard the given paths, asking first and naming what is untracked.
+     * @param paths - the paths the group action applies to.
+     */
+    const discardPaths = (paths: readonly string[]): void => {
+      const entries = current().unstaged.filter(entry => paths.includes(entry.path))
       if (entries.length === 0) return
       const files = entries.map(entry => entry.path)
       const untracked = entries.filter(entry => entry.status === 'untracked').map(entry => entry.path)
       if (!confirmDiscard(t, { files, untracked })) return
-      write(() => calls.discard(files, true), t('notice.discardFailed'))
+      clearSelection()
+      write(() => calls.discard(files, untracked.length > 0), t('notice.discardFailed'))
     }
     const discardStaged = (): void => {
       const files = current().staged.map(entry => entry.path)
@@ -487,6 +504,53 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     }
 
     /**
+     * Act on the selection when one exists, otherwise on the whole group.
+     * @param group - which group the clicked action belongs to.
+     * @param fallback - the group's full path list.
+     * @returns the paths the action applies to.
+     */
+    const pathsFor = (group: 'staged' | 'unstaged', fallback: readonly string[]): string[] => {
+      const picked = selected
+        .filter(key => key.startsWith(`${group}:`))
+        .map(key => key.slice(group.length + 1))
+      return picked.length > 0 ? picked : [...fallback]
+    }
+
+    const clearSelection = (): void => {
+      setSelected([])
+      setAnchor(null)
+    }
+
+    /**
+     * Record one row click as a selection change.
+     *
+     * A plain modified click toggles one row; a shift click extends from the
+     * last row clicked. Selection is per group, because the same path can be
+     * staged and changed at once and the two rows act differently.
+     * @param group - which group the row belongs to.
+     * @param entries - the group's entries as the list draws them.
+     * @param path - the clicked path.
+     * @param range - whether shift was held.
+     */
+    const selectRow = (
+      group: 'staged' | 'unstaged',
+      entries: readonly ChangeEntry[],
+      path: string,
+      range: boolean,
+    ): void => {
+      const key = selectionKey(group, path)
+      if (range) {
+        const span = rangeBetween(entries, anchor, path).map(picked => selectionKey(group, picked))
+        setSelected([...new Set([...selected, ...span])])
+        return
+      }
+      setAnchor(path)
+      setSelected(selected.includes(key)
+        ? selected.filter(existing => existing !== key)
+        : [...selected, key])
+    }
+
+    /**
      * The change list, replaced by the conflict view while a conflicted file is
      * open: resolving one region needs its two sides on screen, which the list
      * has no room for.
@@ -525,20 +589,22 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
             entry,
             actions: rowActions(entry, true, false),
             t,
+            selected: selected.includes(selectionKey('staged', entry.path)),
+            onSelect: (event: RowSelectEvent) => { selectRow('staged', visible(snapshotNow.staged, true), entry.path, event.shiftKey) },
           })),
           actions: [{
             id: 'unstage-all',
             label: t('group.unstageAll'),
             icon: 'unstage',
             disabled: busy || snapshotNow.staged.length === 0,
-            run: unstageAll,
+            run: () => { unstagePaths(pathsFor('staged', snapshotNow.staged.map(entry => entry.path))) },
           }, {
             id: 'discard-staged',
             label: t('group.discardStaged'),
             icon: 'discard',
             danger: true,
             disabled: busy || snapshotNow.staged.length === 0,
-            run: discardStaged,
+            run: () => { discardPaths(pathsFor('staged', snapshotNow.staged.map(entry => entry.path))) },
           }],
         }),
         changeGroup(React, {
@@ -550,22 +616,35 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
             entry,
             actions: rowActions(entry, false, false),
             t,
+            selected: selected.includes(selectionKey('unstaged', entry.path)),
+            onSelect: (event: RowSelectEvent) => { selectRow('unstaged', visible(snapshotNow.unstaged, false), entry.path, event.shiftKey) },
           })),
           actions: [{
             id: 'stage-all',
             label: t('group.stageAll'),
             icon: 'stage',
             disabled: busy || snapshotNow.unstaged.length === 0,
-            run: stageAll,
+            run: () => { stagePaths(pathsFor('unstaged', snapshotNow.unstaged.map(entry => entry.path))) },
           }, {
             id: 'discard-all',
             label: t('group.discardAll'),
             icon: 'discard',
             danger: true,
             disabled: busy || snapshotNow.unstaged.length === 0,
-            run: discardUnstaged,
+            run: () => { discardPaths(pathsFor('unstaged', snapshotNow.unstaged.map(entry => entry.path))) },
           }],
         }),
+        selected.length === 0 ? null : React.createElement('p', {
+          className: `${PREFIX}-selection`,
+          'data-git-selection': String(selected.length),
+          role: 'status',
+        }, t('list.selected', { count: selected.length }),
+        React.createElement('button', {
+          type: 'button',
+          className: `${PREFIX}-selection-clear`,
+          'data-git-selection-clear': '',
+          onClick: clearSelection,
+        }, t('list.clear'))),
         snapshotNow.conflicts.length === 0 ? null : changeGroup(React, {
           title: t('group.conflicts'),
           group: 'conflicts',

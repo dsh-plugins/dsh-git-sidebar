@@ -444,6 +444,34 @@ export const PANEL_STYLES = `
   outline-offset: 2px;
 }
 
+.gs-row[data-selected] {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+}
+
+.gs-selection {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  margin: 4px 0 0;
+  padding: 4px 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 8%, transparent);
+  border-radius: var(--dsw-radius-sm);
+}
+
+.gs-selection-clear {
+  margin-left: auto;
+  padding: 0;
+  color: var(--dsw-alias-brand-primary);
+  font: inherit;
+  font-size: 11px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
 .gs-filter {
   flex: none;
   box-sizing: border-box;

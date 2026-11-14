@@ -45,6 +45,10 @@ export interface RowProps {
   readonly entry: ChangeEntry
   readonly actions: readonly RowAction[]
   readonly t: Translate
+  /** Whether this row is part of the current selection. */
+  readonly selected?: boolean
+  /** Handle a click that is about selection rather than opening the row. */
+  readonly onSelect?: (event: { readonly shiftKey: boolean; readonly metaKey: boolean; readonly ctrlKey: boolean }) => void
 }
 
 /** A path split into the head that gives up space and the tail that stays whole. */
@@ -108,13 +112,21 @@ export function makeFileRow(React: ReactLike): (props: RowProps) => unknown {
       className: `${PREFIX}-row`,
       'data-git-row': entry.path,
       'data-status': entry.status,
+      'data-selected': props.selected === true ? '' : undefined,
+      'aria-selected': props.selected === true ? 'true' : undefined,
     },
     React.createElement('button', {
       type: 'button',
       className: `${PREFIX}-open`,
       title: label.title,
       'aria-label': label.title,
-      onClick: () => {
+      onClick: (event: RowSelectEvent) => {
+        // A modified click is about selection, not about opening: the reader is
+        // building the set of files the next group action applies to.
+        if (event.shiftKey || event.metaKey || event.ctrlKey) {
+          props.onSelect?.(event)
+          return
+        }
         // A conflicted row opens its resolver, not its diff: the diff shows the
         // same two sides with markers, which is not what finishes the file.
         const open = actions.find(action => action.id === 'resolve')
@@ -134,6 +146,13 @@ export function makeFileRow(React: ReactLike): (props: RowProps) => unknown {
       ...actions.map(action => actionButton(React, action))),
     )
   }
+}
+
+/** The share of a click this module reads. */
+export interface RowSelectEvent {
+  readonly shiftKey: boolean
+  readonly metaKey: boolean
+  readonly ctrlKey: boolean
 }
 
 /** One text whose middle gives way: an overflowing head, then a whole tail. */
