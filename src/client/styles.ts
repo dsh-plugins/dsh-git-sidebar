@@ -450,10 +450,100 @@ export const PANEL_STYLES = `
   align-items: center;
 }
 
+/*
+ * The amend row sits above the field and the buttons below it, which is the
+ * order JetBrains uses: the toggle changes what the buttons will do, so it is
+ * read before them, and the two send actions close the block.
+ */
+.gs-commit-head {
+  position: relative;
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+}
+
+.gs-commit-recent {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--dsw-alias-label-tertiary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+}
+
+.gs-commit-recent:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.gs-commit-recent-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-width: 100%;
+  padding: 4px;
+  margin-top: 2px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-md);
+  box-shadow: var(--dsw-shadow-md, 0 6px 18px rgb(0 0 0 / 24%));
+}
+
+.gs-commit-recent-item {
+  padding: 5px 8px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+}
+
+.gs-commit-push {
+  flex: none;
+  box-sizing: border-box;
+  height: 28px;
+  padding: 0 12px;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-md);
+  cursor: pointer;
+}
+
+.gs-commit-push:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+}
+
+.gs-commit-push:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
 .gs-commit-hint {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
+  text-align: end;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
 }

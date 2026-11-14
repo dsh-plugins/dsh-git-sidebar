@@ -162,6 +162,10 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const [refreshing, setRefreshing] = React.useState(false)
     const [message, setMessage] = React.useState('')
     const [amend, setAmend] = React.useState(false)
+    const [recentOpen, setRecentOpen] = React.useState(false)
+    // Offered back as one-click messages. Seeded from the cached page and kept
+    // current by the history's own remember hook, so this costs no request.
+    const [recent, setRecent] = React.useState<readonly string[]>(subjectsOf(cache.history.get(sessionId)))
     const [notice, setNotice] = React.useState('')
     const [stashes, setStashes] = React.useState<readonly StashEntry[]>(cachedStashes ?? [])
     const [historyOpen, setHistoryOpen] = React.useState(true)
@@ -551,6 +555,49 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         })
     }
 
+    /**
+     * Commit, then push the branch.
+     *
+     * The push is the second half of one gesture, so it runs only when the
+     * commit succeeded: a failed commit leaves nothing new to send, and asking
+     * about a push for a write that never happened would be a question about
+     * nothing.
+     * @param stageAll - whether to stage every tracked change first.
+     */
+    const commitAndPush = (stageAll: boolean): void => {
+      const text = message.trim()
+      if (text === '') return
+      if (!confirmSync(t, 'push', current().upstream?.name ?? null)) return
+      setNotice('')
+      setBusy(true)
+      void calls.commit(text, { amend, stageAll })
+        .catch((error: unknown) => ({ ok: false as const, problem: 'failed' as const, message: messageOf(error) }))
+        .then((outcome) => {
+          if (!outcome.ok) {
+            setBusy(false)
+            setNotice(outcome.message)
+            return
+          }
+          rememberStatus(cache, sessionId, outcome.snapshot)
+          setSnapshot(outcome.snapshot)
+          setMessage('')
+          setAmend(false)
+          dropHistory()
+          return calls.sync('push')
+            .catch((error: unknown) => ({ ok: false as const, problem: 'failed' as const, message: messageOf(error) }))
+            .then((pushed) => {
+              setBusy(false)
+              if (pushed.ok) {
+                rememberStatus(cache, sessionId, pushed.snapshot)
+                setSnapshot(pushed.snapshot)
+                setNotice(t('notice.commitPushed'))
+                return
+              }
+              setNotice(refusalText(t, pushed.problem, pushed.message, t('notice.syncFailed')))
+            })
+        })
+    }
+
     const rowActions = (entry: ChangeEntry, staged: boolean, conflicted: boolean): readonly RowAction[] => {
       const openDiff = (): void => { openFileDiff(tab, entry.path, staged) }
       const diffAction: RowAction = { id: 'diff', icon: 'diff', label: t('row.diff'), run: openDiff }
@@ -619,6 +666,12 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       drop: stashDrop,
     })
 
+    /**
+     * The messages worth offering back: the newest subjects the cache holds.
+     *
+     * A reader who commits the same kind of change repeatedly wants the wording
+     * they used last time, and the history page already carries it.
+     */
     const historyElement = (): unknown => React.createElement(History, {
       open: historyOpen,
       t,
@@ -637,6 +690,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       initial: cache.history.get(sessionId),
       remember: (page: { commits: readonly CommitEntry[]; hasMore: boolean }) => {
         appendHistory(cache, sessionId, page)
+        setRecent(subjectsOf(page))
       },
     })
 
@@ -877,10 +931,14 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         busy,
         canAmend: snapshot.commit !== null && snapshot.commit !== undefined,
         amend,
+        recent,
+        recentOpen,
+        onRecentToggle: () => { setRecentOpen(!recentOpen) },
         t,
         onChange: setMessage,
         onAmendChange: setAmend,
         onSubmit: commitWith,
+        onSubmitAndPush: commitAndPush,
       }),
       historyElement(),
       )
@@ -904,10 +962,14 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         busy,
         canAmend: snapshot.commit !== null && snapshot.commit !== undefined,
         amend,
+        recent,
+        recentOpen,
+        onRecentToggle: () => { setRecentOpen(!recentOpen) },
         t,
         onChange: setMessage,
         onAmendChange: setAmend,
         onSubmit: commitWith,
+        onSubmitAndPush: commitAndPush,
       }),
       historyElement(),
     )
@@ -1020,6 +1082,32 @@ function stateBlock(React: ReactLike, title: string, body: string, detail?: stri
 }
 
 /** Bars at about the height the branch and the first group will take. */
+/** How many past messages the commit panel offers back. */
+const RECENT_LIMIT = 5
+
+/**
+ * The newest distinct subjects of one page, offered as one-click messages.
+ *
+ * A reader who commits the same kind of change repeatedly wants the wording they
+ * used last time, and the history page already carries it. Duplicates are
+ * dropped so five repeats of one message do not fill the menu.
+ * @param page - the cached history page, when there is one.
+ * @returns up to {@link RECENT_LIMIT} subjects, newest first.
+ */
+function subjectsOf(page: { readonly commits: readonly CommitEntry[] } | undefined): readonly string[] {
+  if (page === undefined) return []
+  const seen = new Set<string>()
+  const subjects: string[] = []
+  for (const commit of page.commits) {
+    const subject = commit.subject.trim()
+    if (subject === '' || seen.has(subject)) continue
+    seen.add(subject)
+    subjects.push(subject)
+    if (subjects.length === RECENT_LIMIT) break
+  }
+  return subjects
+}
+
 function skeleton(React: ReactLike): unknown {
   const widths = [46, 70, 58, 34]
   return React.createElement('div', { className: `${PREFIX}-skeleton`, 'aria-busy': 'true' },
