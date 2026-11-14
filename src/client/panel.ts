@@ -101,7 +101,7 @@ interface SessionCalls {
   stage(paths: readonly string[]): Promise<WriteOutcome>
   unstage(paths: readonly string[]): Promise<WriteOutcome>
   discard(paths: readonly string[], includeUntracked: boolean): Promise<WriteOutcome>
-  commit(message: string): ReturnType<GitSidebarApi['commit']>
+  commit(message: string, options?: { amend?: boolean; stageAll?: boolean }): ReturnType<GitSidebarApi['commit']>
   branches(): Promise<BranchList>
   checkout(branch: string): Promise<WriteOutcome>
   createBranch(name: string): Promise<WriteOutcome>
@@ -132,6 +132,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const [loading, setLoading] = React.useState(true)
     const [busy, setBusy] = React.useState(false)
     const [message, setMessage] = React.useState('')
+    const [amend, setAmend] = React.useState(false)
     const [notice, setNotice] = React.useState('')
     const [stashes, setStashes] = React.useState<readonly StashEntry[]>([])
     const [historyOpen, setHistoryOpen] = React.useState(true)
@@ -176,7 +177,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       unstage: paths => runtime.api.ready.then(api => api.unstage(sessionId, paths)),
       discard: (paths, includeUntracked) => runtime.api.ready
         .then(api => api.discard(sessionId, paths, includeUntracked)),
-      commit: text => runtime.api.ready.then(api => api.commit(sessionId, text)),
+      commit: (text, options) => runtime.api.ready.then(api => api.commit(sessionId, text, options)),
       branches: () => runtime.api.ready
         .then(api => api.branches(sessionId))
         .catch(() => EMPTY_BRANCHES),
@@ -326,11 +327,17 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       write(() => runtime.api.ready.then(api => api.abortOperation(sessionId)), t('notice.abortFailed'))
     }
 
-    const commit = (): void => {      const text = message.trim()
+    /**
+     * Commit the written message, amending or staging everything when asked.
+     * @param stageAll - stage every tracked change first, for a commit with an
+     * empty index.
+     */
+    const commitWith = (stageAll: boolean): void => {
+      const text = message.trim()
       if (text === '') return
       setNotice('')
       setBusy(true)
-      void calls.commit(text)
+      void calls.commit(text, { amend, stageAll })
         .catch((error: unknown) => ({ ok: false as const, problem: 'failed' as const, message: messageOf(error) }))
         .then((outcome) => {
           setBusy(false)
@@ -340,6 +347,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
           }
           setSnapshot(outcome.snapshot)
           setMessage('')
+          setAmend(false)
         })
     }
 
@@ -535,9 +543,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     }
 
     const total = snapshot.staged.length + snapshot.unstaged.length + snapshot.conflicts.length
-    // With nothing to show, the groups and the commit box would offer empty
-    // controls next to a sentence saying exactly that. The stash group and the
-    // history stay, because both describe the repository rather than the tree.
+    // A clean tree keeps its commit box: amending the previous commit's message
+    // is a legitimate clean-tree operation, and hiding the box would make that
+    // the one thing the panel cannot do.
     if (total === 0 && conflict === null) {
       return React.createElement('section', {
         className: `${PREFIX}-root`,
@@ -548,6 +556,20 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
       stateBlock(React, t('state.clean.title'), t('state.clean.body')),
       React.createElement(StashGroup, stashProps()),
+      CommitBox(React, {
+        message,
+        stagedCount: 0,
+        unstagedCount: 0,
+        clean: true,
+        identityMissing: isIdentityMissing(snapshot.identity),
+        busy,
+        canAmend: snapshot.commit !== null && snapshot.commit !== undefined,
+        amend,
+        t,
+        onChange: setMessage,
+        onAmendChange: setAmend,
+        onSubmit: commitWith,
+      }),
       historyElement(),
       )
     }
@@ -562,11 +584,16 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       CommitBox(React, {
         message,
         stagedCount: snapshot.staged.length,
+        unstagedCount: snapshot.unstaged.length,
+        clean: false,
         identityMissing: isIdentityMissing(snapshot.identity),
         busy,
+        canAmend: snapshot.commit !== null && snapshot.commit !== undefined,
+        amend,
         t,
         onChange: setMessage,
-        onSubmit: commit,
+        onAmendChange: setAmend,
+        onSubmit: commitWith,
       }),
       historyElement(),
     )

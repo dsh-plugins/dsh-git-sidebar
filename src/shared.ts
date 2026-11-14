@@ -129,6 +129,10 @@ export interface DiscardArgs extends PathsArgs {
 export interface CommitArgs {
   readonly sessionId: string
   readonly message: string
+  /** Rewrite the previous commit instead of adding one. */
+  readonly amend?: boolean
+  /** Stage every tracked change before committing. */
+  readonly stageAll?: boolean
 }
 
 /** One entry of the commit history. */

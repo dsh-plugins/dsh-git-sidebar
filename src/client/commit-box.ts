@@ -20,13 +20,22 @@ export interface CommitBoxProps {
   readonly message: string
   /** Files in the index; the button is disabled while this is zero. */
   readonly stagedCount: number
+  /** Tracked files the working tree still holds; zero hides the stage-all option. */
+  readonly unstagedCount: number
   /** Whether the repository has a configured author. */
   readonly identityMissing: boolean
   /** Whether a commit is running. */
   readonly busy: boolean
+  /** Whether the working tree and index both match HEAD. */
+  readonly clean: boolean
+  /** Whether the repository has a commit to amend. */
+  readonly canAmend: boolean
+  readonly amend: boolean
   readonly t: Translate
   onChange(value: string): void
-  onSubmit(): void
+  onAmendChange(value: boolean): void
+  /** Commit the index, or stage everything first when nothing is staged. */
+  onSubmit(stageAll: boolean): void
 }
 
 /**
@@ -36,7 +45,13 @@ export interface CommitBoxProps {
  */
 export function blockedReasonKey(props: CommitBoxProps): string | undefined {
   if (props.busy) return 'commit.busy'
-  if (props.stagedCount === 0) return 'commit.nothingStaged'
+  // A clean tree without an amend has nothing to write: staging everything
+  // would stage nothing, and amending is the only operation left.
+  if (props.clean && !props.amend) return 'commit.clean'
+  // Staging everything is what the button does when the index is empty, so the
+  // index size only blocks a commit when there is nothing to stage either. An
+  // amend rewrites the previous commit, which needs no index at all.
+  if (props.stagedCount === 0 && !props.amend && props.unstagedCount === 0) return 'commit.nothingStaged'
   if (props.message.trim() === '') return 'commit.emptyMessage'
   return undefined
 }
@@ -55,6 +70,8 @@ export function hintOf(props: CommitBoxProps): string {
   const blocked = blockedReasonKey(props)
   if (blocked !== undefined) return props.t(blocked)
   if (props.identityMissing) return props.t('commit.identityMissing')
+  if (props.amend) return props.t('commit.amendHint')
+  if (props.stagedCount === 0) return props.t('commit.stageAllHint', { count: props.unstagedCount })
   return props.t('commit.hint', { count: props.stagedCount })
 }
 
@@ -65,9 +82,9 @@ export function hintOf(props: CommitBoxProps): string {
  * @returns the box.
  */
 export function CommitBox(React: ReactLike, props: CommitBoxProps): unknown {
-  const { t, busy, identityMissing } = props
+  const { t, busy, identityMissing, canAmend } = props
   const blocked = blockedReasonKey(props)
-  const submit = (): void => { if (blocked === undefined) props.onSubmit() }
+  const submit = (): void => { if (blocked === undefined) props.onSubmit(props.stagedCount === 0) }
   return React.createElement('div', { className: `${PREFIX}-commit` },
     React.createElement('textarea', {
       className: `${PREFIX}-commit-input`,
@@ -86,6 +103,19 @@ export function CommitBox(React: ReactLike, props: CommitBoxProps): unknown {
       },
     }),
     React.createElement('div', { className: `${PREFIX}-commit-foot` },
+      canAmend
+        ? React.createElement('label', { className: `${PREFIX}-commit-amend` },
+          React.createElement('input', {
+            type: 'checkbox',
+            'data-git-amend': '',
+            checked: props.amend,
+            disabled: busy,
+            onChange: (event: { target: { checked: boolean } }) => {
+              props.onAmendChange(event.target.checked)
+            },
+          }),
+          React.createElement('span', null, t('commit.amend')))
+        : null,
       React.createElement('p', {
         className: `${PREFIX}-commit-hint`,
         'data-warn': identityMissing ? '' : undefined,
@@ -96,9 +126,9 @@ export function CommitBox(React: ReactLike, props: CommitBoxProps): unknown {
         className: `${PREFIX}-commit-submit`,
         'data-git-commit': '',
         disabled: blocked !== undefined,
-        title: t('commit.submit'),
+        title: props.stagedCount === 0 ? t('commit.stageAllSubmit') : t('commit.submit'),
         onClick: submit,
-      }, t('commit.submit')),
+      }, props.stagedCount === 0 ? t('commit.stageAllSubmit') : t('commit.submit')),
     ),
   )
 }

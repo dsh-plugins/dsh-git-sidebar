@@ -84,16 +84,17 @@ export async function hasStagedChanges(git: Git): Promise<boolean> {
  * Commit the index with a message passed through a temporary file, then delete it.
  * @param git - runner bound to the repository root.
  * @param message - the commit message, already trimmed and non-empty.
+ * @param amend - rewrite the previous commit instead of adding one.
  * @returns the abbreviated object name of the new commit, or null when HEAD stayed unreadable.
  */
-export async function commitStaged(git: Git, message: string): Promise<string | null> {
+export async function commitStaged(git: Git, message: string, amend = false): Promise<string | null> {
   const file = join(
     tmpdir(),
     `dsh-git-sidebar-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`,
   )
   await writeFile(file, message, 'utf8')
   try {
-    await git('commit', ['commit', '-F', file])
+    await git('commit', amend ? ['commit', '--amend', '-F', file] : ['commit', '-F', file])
   } finally {
     await rm(file, { force: true })
   }

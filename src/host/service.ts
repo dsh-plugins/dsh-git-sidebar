@@ -384,21 +384,28 @@ export class GitSidebarService extends TypertRemoteService {
     }
     const message = typeof args?.message === 'string' ? args.message.trim() : ''
     if (message.length === 0) return { ok: false, problem: 'empty-message', message: 'a commit needs a message' }
+    const amend = args?.amend === true
+    const stageAll = args?.stageAll === true
     try {
       const root = await this.rootOf(session, directory)
       const git = gitIn(this.home, this.config, session, root, this.signalOf())
-      const identity = await readIdentity(git)
-      if (identity.name === null || identity.email === null) {
-        return {
-          ok: false,
-          problem: 'identity-missing',
-          message: 'set user.name and user.email before committing',
+      if (!amend) {
+        const identity = await readIdentity(git)
+        if (identity.name === null || identity.email === null) {
+          return {
+            ok: false,
+            problem: 'identity-missing',
+            message: 'set user.name and user.email before committing',
+          }
         }
       }
-      if (!(await hasStagedChanges(git))) {
+      if (stageAll) await write(git, 'stage', { paths: await allPaths(git), includeUntracked: false })
+      // An amend may fold nothing new into the commit, so the index check only
+      // applies when a new commit is being made.
+      if (!amend && !(await hasStagedChanges(git))) {
         return { ok: false, problem: 'nothing-staged', message: 'the index holds no change to commit' }
       }
-      const commit = await commitStaged(git, message)
+      const commit = await commitStaged(git, message, amend)
       return { ok: true, commit, snapshot: await this.snapshot(session, root) }
     } catch (error) {
       return { ok: false, problem: 'failed', message: messageOf(error) }
@@ -501,6 +508,15 @@ export class GitSidebarService extends TypertRemoteService {
   private signalOf(): AbortSignal {
     return this.home.invocation?.signal ?? new AbortController().signal
   }
+}
+
+/** Every tracked change in the working tree, relative to the repository root. */
+async function allPaths(git: GitRunner): Promise<string[]> {
+  const status = await git('status', ['status', '--porcelain=v1', '-z', '--untracked-files=no'])
+  return status.stdout
+    .split('\0')
+    .map(entry => entry.slice(3).trim())
+    .filter(path => path.length > 0)
 }
 
 Object.defineProperty(GitSidebarService.prototype, REMOTE_METHOD_DESCRIPTOR, {

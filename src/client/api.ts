@@ -165,7 +165,7 @@ export interface GitSidebarApi {
   stage(sessionId: string, paths: readonly string[]): Promise<WriteOutcome>
   unstage(sessionId: string, paths: readonly string[]): Promise<WriteOutcome>
   discard(sessionId: string, paths: readonly string[], includeUntracked: boolean): Promise<WriteOutcome>
-  commit(sessionId: string, message: string): Promise<CommitOutcome>
+  commit(sessionId: string, message: string, options?: { amend?: boolean; stageAll?: boolean }): Promise<CommitOutcome>
   requestDiff(args: DiffArgs, signal?: AbortSignal): Promise<DiffPayload>
   history(sessionId: string, limit: number, skip: number): Promise<HistoryPage>
   requestCommit(args: CommitDetailArgs, signal?: AbortSignal): Promise<DiffPayload>
@@ -276,9 +276,13 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
     discard(sessionId: string, paths: readonly string[], includeUntracked: boolean): Promise<WriteOutcome> {
       return foldWrite(() => remote.discard({ sessionId, paths, includeUntracked }))
     },
-    async commit(sessionId: string, message: string): Promise<CommitOutcome> {
+    async commit(
+      sessionId: string,
+      message: string,
+      options?: { amend?: boolean; stageAll?: boolean },
+    ): Promise<CommitOutcome> {
       try {
-        const result = await remote.commit({ sessionId, message })
+        const result = await remote.commit({ sessionId, message, ...options })
         if (result.ok) return result.value
         return { ok: false, problem: 'failed', message: result.error.message }
       } catch (error) {

@@ -20,7 +20,7 @@ export interface ZodLike {
   object(shape: Record<string, unknown>): unknown
   strictObject(shape: Record<string, unknown>): unknown
   string(): { optional(): unknown }
-  boolean(): unknown
+  boolean(): { optional(): unknown }
   number(): unknown
   array(item: unknown): unknown
 }
@@ -119,7 +119,12 @@ export function gitSidebarContribution(zod: ZodLike): RemoteContribution {
       descriptor('stage', () => ({ sessionId: zod.string(), paths: strings() })),
       descriptor('unstage', () => ({ sessionId: zod.string(), paths: strings() })),
       descriptor('discard', () => ({ sessionId: zod.string(), paths: strings(), includeUntracked: zod.boolean() })),
-      descriptor('commit', () => ({ sessionId: zod.string(), message: zod.string() })),
+      descriptor('commit', () => ({
+        sessionId: zod.string(),
+        message: zod.string(),
+        amend: zod.boolean().optional(),
+        stageAll: zod.boolean().optional(),
+      })),
       descriptor('history', () => ({ sessionId: zod.string(), limit: zod.number(), skip: zod.number() })),
       descriptor('commitDetail', () => ({ sessionId: zod.string(), sha: zod.string() })),
       descriptor('branches', () => ({ sessionId: zod.string() })),
