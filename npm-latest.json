@@ -1,0 +1,10 @@
+{
+  "name": "@dsh-plugin/dsh-git-sidebar",
+  "latest": "0.0.1",
+  "publishedAt": "2026-11-14T15:15:44.478Z",
+  "dist": {
+    "tarball": "https://registry.npmjs.org/@dsh-plugin/dsh-git-sidebar/-/dsh-git-sidebar-0.0.1.tgz",
+    "integrity": "sha512-mdLyeiiadT49qPRFit5sSQzZPxgoifbY3A6O5isXwmzvfPyfmfH2XcyPuw2M5SYwMbYNKHwkt1+gGf8zGfdwHQ==",
+    "unpackedSize": 281169
+  }
+}
