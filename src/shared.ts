@@ -237,6 +237,52 @@ export interface StashDropArgs {
 /** The network operation a sync request names. */
 export type SyncAction = 'fetch' | 'pull' | 'push'
 
+/** How one conflicted region is resolved. */
+export type ConflictChoice = 'ours' | 'theirs' | 'both'
+
+/** One run of lines in a conflicted file: shared text, or a conflict block. */
+export type ConflictSegment =
+  | { readonly kind: 'common'; readonly lines: readonly string[] }
+  | {
+    readonly kind: 'conflict'
+    /** Text between the opening marker and `=======`. */
+    readonly ours: readonly string[]
+    /** Text between `=======` and the closing marker. */
+    readonly theirs: readonly string[]
+    /** The branch or commit each side came from, as the marker spells it. */
+    readonly oursLabel: string
+    readonly theirsLabel: string
+  }
+
+/** One conflicted file, split into the regions a reader decides between. */
+export type ConflictContent =
+  | { readonly kind: 'marked'; readonly segments: readonly ConflictSegment[] }
+  /** The file holds no conflict markers, so the reader resolved it by hand. */
+  | { readonly kind: 'resolved' }
+  | { readonly kind: 'error'; readonly message: string }
+
+/** Arguments of one conflicted file. */
+export interface ConflictArgs {
+  readonly sessionId: string
+  readonly path: string
+}
+
+/** Arguments of a resolution request. */
+export interface ResolveConflictArgs {
+  readonly sessionId: string
+  readonly path: string
+  /**
+   * One choice per conflicted region, in file order. A shorter list leaves the
+   * remaining regions as they are.
+   */
+  readonly choices: readonly ConflictChoice[]
+}
+
+/** Arguments of an abort request. */
+export interface AbortArgs {
+  readonly sessionId: string
+}
+
 /** Arguments of a sync request. */
 export interface SyncArgs {
   readonly sessionId: string

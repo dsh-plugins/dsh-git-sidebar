@@ -9,22 +9,24 @@
  */
 
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import type {
-  BranchList, BranchListArgs, CheckoutArgs, CommitArgs, CommitDetailArgs, CommitOutcome, CreateBranchArgs,
-  DiffArgs, DiffPayload, DiscardArgs, HistoryArgs, HistoryPage, PathsArgs, StashApplyArgs, StashArgs, StashDropArgs,
-  StashEntry, StashListArgs, StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
+import {
+  BranchList, BranchListArgs, CheckoutArgs, CommitArgs, CommitDetailArgs, CommitOutcome, ConflictArgs,
+  ConflictChoice, ConflictContent, CreateBranchArgs, DiffArgs, DiffPayload, DiscardArgs, HistoryArgs, HistoryPage,
+  PathsArgs, ResolveConflictArgs, AbortArgs, StashApplyArgs, StashArgs, StashDropArgs, StashEntry, StashListArgs,
+  StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_METHODS } from '../remote-descriptor.ts'
 import {
-  checkout, createBranch, hasTrackedChanges, isValidBranchName, isSyncAction, stashApply, stashDrop as stashDropEntry,
-  stashPush, sync, validStashIndex,
+  abort, checkout, createBranch, hasTrackedChanges, isValidBranchName, isSyncAction, stashApply,
+  stashDrop as stashDropEntry, stashPush, sync, validStashIndex,
 } from './branch.ts'
+import { readConflict, writeResolved } from './conflict.ts'
 import type { HostContext, HostSession } from './context.ts'
 import { readDiff } from './diff.ts'
 import type { DiffConfig } from './diff.ts'
 import { GitFailure, GitMissingError, gitIn } from './git.ts'
 import type { GitConfig, GitRunner } from './git.ts'
-import { readBranches, readCommitDiff, readHistory, readStashes, readUpstream } from './refs.ts'
+import { readBranches, readCommitDiff, readHistory, readOperation, readStashes, readUpstream } from './refs.ts'
 import { NoRepository, messageOf, readIdentity, readStatus, topLevel, unavailable } from './status.ts'
 import { commitStaged, hasStagedChanges, write } from './write.ts'
 import type { WriteKind } from './write.ts'
@@ -274,6 +276,70 @@ export class GitSidebarService extends TypertRemoteService {
         this.signalOf(),
       )
       await sync(network, action)
+      return null
+    })
+  }
+
+  /**
+   * Read one conflicted file's regions.
+   * @param args - the Session and the conflicted path.
+   * @returns the regions, a resolved notice, or the reason it is unavailable.
+   */
+  async conflict(args?: ConflictArgs): Promise<ConflictContent> {
+    const target = this.targetOf(args?.sessionId)
+    if (target === undefined || typeof args?.path !== 'string') {
+      return { kind: 'error', message: 'conflict requires a session and a path' }
+    }
+    try {
+      const root = await this.rootOf(target.session, target.directory)
+      return await readConflict(root, args.path)
+    } catch (error) {
+      return { kind: 'error', message: messageOf(error) }
+    }
+  }
+
+  /**
+   * Write a file with one side chosen per conflicted region, then mark it resolved.
+   * @param args - the Session, the path, and one choice per region.
+   * @returns the new snapshot, or the refusal.
+   */
+  async resolveConflict(args?: ResolveConflictArgs): Promise<WriteOutcome> {
+    const path = typeof args?.path === 'string' ? args.path : ''
+    if (path.length === 0) return { ok: false, problem: 'no-paths', message: 'no path was given' }
+    const choices = Array.isArray(args?.choices)
+      ? args.choices.filter((choice): choice is ConflictChoice =>
+        choice === 'ours' || choice === 'theirs' || choice === 'both')
+      : []
+    return await this.writeWith(args?.sessionId, async (git, session, directory) => {
+      const root = await this.rootOf(session, directory)
+      const content = await readConflict(root, path)
+      if (content.kind === 'error') return { ok: false, problem: 'failed', message: content.message }
+      if (content.kind === 'resolved') {
+        // Nothing left to choose: the reader resolved it by hand, so only the
+        // index step remains.
+        await git('add', ['add', '--', path])
+        return null
+      }
+      if (!(await writeResolved(root, path, content.segments, choices))) {
+        return { ok: false, problem: 'failed', message: 'the resolved file could not be written' }
+      }
+      await git('add', ['add', '--', path])
+      return null
+    })
+  }
+
+  /**
+   * Abort the merge, rebase, cherry-pick, or revert the checkout is between.
+   * @param args - the Session.
+   * @returns the new snapshot, or the refusal.
+   */
+  async abortOperation(args?: AbortArgs): Promise<WriteOutcome> {
+    return await this.writeWith(args?.sessionId, async (git) => {
+      const operation = await readOperation(git)
+      if (operation === null) {
+        return { ok: false, problem: 'failed', message: 'no operation is in progress' }
+      }
+      await abort(git, operation)
       return null
     })
   }

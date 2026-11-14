@@ -990,4 +990,114 @@ export const PANEL_STYLES = `
     min-height: 40px;
   }
 }
+/* The conflict view: two sides per region, each with a choice. */
+.gs-conflict {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px;
+  gap: 8px;
+}
+
+.gs-conflict-head {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+}
+
+.gs-conflict-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-conflict-list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.gs-conflict-region {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-md);
+}
+
+.gs-conflict-side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: var(--dsw-radius-sm);
+}
+
+.gs-conflict-side[data-side='ours'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 8%, transparent);
+}
+
+.gs-conflict-side[data-side='theirs'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 8%, transparent);
+}
+
+.gs-conflict-label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.gs-conflict-text {
+  margin: 0;
+  overflow-x: auto;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsh-font-family-code, ui-monospace, monospace);
+  font-size: 12px;
+  white-space: pre;
+}
+
+.gs-conflict-choices {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.gs-conflict-choice {
+  padding: 3px 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+}
+
+.gs-conflict-choice[data-active] {
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-primary-fill);
+  border-color: transparent;
+}
+
+.gs-conflict-choice:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.gs-conflict-actions {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+}
 `

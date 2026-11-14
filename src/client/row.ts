@@ -31,7 +31,7 @@ const MIN_HEAD = 8
 
 /** One row action: what it does, how it is labelled, and which glyph draws it. */
 export interface RowAction {
-  readonly id: 'stage' | 'unstage' | 'discard' | 'diff'
+  readonly id: 'stage' | 'unstage' | 'discard' | 'diff' | 'resolve'
   readonly icon: IconName
   readonly label: string
   /** Destructive actions take the error ink on hover. */
@@ -115,7 +115,10 @@ export function makeFileRow(React: ReactLike): (props: RowProps) => unknown {
       title: label.title,
       'aria-label': label.title,
       onClick: () => {
-        const open = actions.find(action => action.id === 'diff')
+        // A conflicted row opens its resolver, not its diff: the diff shows the
+        // same two sides with markers, which is not what finishes the file.
+        const open = actions.find(action => action.id === 'resolve')
+          ?? actions.find(action => action.id === 'diff')
         if (open !== undefined) open.run()
       },
     },

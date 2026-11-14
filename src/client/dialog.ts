@@ -130,6 +130,20 @@ export function confirmSync(t: Translate, action: 'pull' | 'push', upstream: str
 }
 
 /**
+ * Ask before undoing a merge or a rebase.
+ *
+ * The operation may have taken real work to reach, and aborting discards the
+ * resolution of every conflict in it, so the choice is stated with what it
+ * throws away rather than as a bare confirmation.
+ * @param t - the panel's translator.
+ * @param operation - the operation being aborted.
+ * @returns whether the reader agreed.
+ */
+export function confirmAbort(t: Translate, operation: string): boolean {
+  return window.confirm(t('dialog.abort', { operation }))
+}
+
+/**
  * Report a refusal the reader asked for and Git declined.
  *
  * Switching branches over a dirty tree is the case this exists for: the request

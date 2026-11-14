@@ -15,7 +15,8 @@
  */
 
 import type {
-  BranchList, ChangeEntry, CommitEntry, GitIdentity, StashEntry, StatusSnapshot, SyncAction, WriteOutcome,
+  BranchList, ChangeEntry, CommitEntry, ConflictChoice, ConflictContent, GitIdentity, StashEntry, StatusSnapshot,
+  SyncAction, WriteOutcome,
 } from '../shared.ts'
 import { DIFF_TAB_KIND, diffAddress } from '../shared.ts'
 import type {
@@ -24,12 +25,13 @@ import type {
 import { messageOf, unavailableSnapshot } from './api.ts'
 import { makeBranchHeader, type BranchHeaderProps } from './branch-header.ts'
 import { CommitBox } from './commit-box.ts'
-import { confirmDiscard, confirmSync, notify } from './dialog.ts'
+import { confirmAbort, confirmDiscard, confirmSync, notify } from './dialog.ts'
 import { makeHistory } from './history.ts'
 import { Icon } from './icons.ts'
 import { makeFileRow, type RowAction } from './row.ts'
 import { makeStashGroup, type StashProps } from './stash-group.ts'
 import { PREFIX } from './styles.ts'
+import { conflictNotice, makeConflictView } from './conflict-view.ts'
 
 /** The panel's runtime facts, fixed for the life of the plugin. */
 export interface PanelRuntime {
@@ -71,7 +73,30 @@ interface GroupAction {
   run(): void
 }
 
-/** The endpoints one render's handlers call, already named with the Session. */
+/** A conflicted file the reader has open, with the choices made so far. */
+interface OpenConflict {
+  readonly path: string
+  readonly content: ConflictContent | undefined
+  readonly choices: readonly ConflictChoice[]
+}
+
+/**
+ * The first choice per region: keep both sides.
+ *
+ * Keeping both never discards a line, so the default is the one a reader cannot
+ * regret; picking a side is the deliberate narrowing that follows.
+ * @param content - what the Host read.
+ * @returns one choice per region.
+ */
+function defaultChoices(content: ConflictContent): ConflictChoice[] {
+  if (content.kind !== 'marked') return []
+  const regions = content.segments.filter(segment => segment.kind === 'conflict')
+  return regions.map(() => 'both' as const)
+}
+
+/**
+ * The endpoints one render's handlers call, already named with the Session.
+ */
 interface SessionCalls {
   stage(paths: readonly string[]): Promise<WriteOutcome>
   unstage(paths: readonly string[]): Promise<WriteOutcome>
@@ -110,6 +135,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const [notice, setNotice] = React.useState('')
     const [stashes, setStashes] = React.useState<readonly StashEntry[]>([])
     const [historyOpen, setHistoryOpen] = React.useState(true)
+    const [conflict, setConflict] = React.useState<OpenConflict | null>(null)
 
     const load = React.useCallback((): void => {
       if (sessionId === '') {
@@ -251,8 +277,56 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         })
     }
 
-    const commit = (): void => {
-      const text = message.trim()
+    /** Open one conflicted file: read its regions and clear the previous choice. */
+    const openConflict = (path: string): void => {
+      setConflict({ path, content: undefined, choices: [] })
+      void runtime.api.ready
+        .then(api => api.conflict(sessionId, path))
+        .catch((error: unknown) => ({ kind: 'error' as const, message: messageOf(error) }))
+        .then((content) => {
+          setConflict((open) => open === null || open.path !== path
+            ? open
+            : { path, content, choices: defaultChoices(content) })
+        })
+    }
+
+    /** Record one region's choice, leaving the others alone. */
+    const chooseRegion = (index: number, choice: ConflictChoice): void => {
+      setConflict((open) => {
+        if (open === null) return open
+        const choices = [...open.choices]
+        choices[index] = choice
+        return { ...open, choices }
+      })
+    }
+
+    const resolveOpenConflict = (): void => {
+      if (conflict === null) return
+      const { path, choices } = conflict
+      setBusy(true)
+      setNotice('')
+      void runtime.api.ready
+        .then(api => api.resolveConflict(sessionId, path, choices))
+        .catch((error: unknown) => ({ ok: false as const, problem: 'failed' as const, message: messageOf(error) }))
+        .then((outcome) => {
+          setBusy(false)
+          const text = conflictNotice(outcome, t)
+          if (text !== '') {
+            setNotice(text)
+            return
+          }
+          if (outcome.ok) setSnapshot(outcome.snapshot)
+          setConflict(null)
+        })
+    }
+
+    const abortOperation = (): void => {
+      if (current().operation === null || current().operation === undefined) return
+      if (!confirmAbort(t, String(current().operation))) return
+      write(() => runtime.api.ready.then(api => api.abortOperation(sessionId)), t('notice.abortFailed'))
+    }
+
+    const commit = (): void => {      const text = message.trim()
       if (text === '') return
       setNotice('')
       setBusy(true)
@@ -272,7 +346,16 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const rowActions = (entry: ChangeEntry, staged: boolean, conflicted: boolean): readonly RowAction[] => {
       const openDiff = (): void => { openFileDiff(tab, entry.path, staged) }
       const diffAction: RowAction = { id: 'diff', icon: 'diff', label: t('row.diff'), run: openDiff }
-      if (conflicted) return [diffAction]
+      // A conflicted path's default action opens the region chooser: the diff
+      // shows the same two sides with markers, which is not what resolves it.
+      if (conflicted) {
+        return [{
+          id: 'resolve',
+          icon: 'merge',
+          label: t('row.resolve'),
+          run: () => { openConflict(entry.path) },
+        }, diffAction]
+      }
       if (staged) {
         return [{
           id: 'unstage',
@@ -311,6 +394,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       createBranch,
       sync,
       stash: stashCurrent,
+      abort: abortOperation,
     })
 
     const stashProps = (): StashProps => ({
@@ -334,6 +418,95 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       revision: snapshot?.commit ?? '',
       onToggle: () => { setHistoryOpen(!historyOpen) },
     })
+
+    const ConflictView = makeConflictView(React)
+
+    /**
+     * The change list, replaced by the conflict view while a conflicted file is
+     * open: resolving one region needs its two sides on screen, which the list
+     * has no room for.
+     */
+    const bodyElement = (snapshotNow: StatusSnapshot): unknown => {
+      if (conflict !== null) {
+        return React.createElement(ConflictView, {
+          path: conflict.path,
+          content: conflict.content,
+          choices: conflict.choices,
+          busy,
+          t,
+          choose: chooseRegion,
+          submit: resolveOpenConflict,
+          close: () => { setConflict(null) },
+        })
+      }
+      return React.createElement('div', { className: `${PREFIX}-body` },
+        notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
+        changeGroup(React, {
+          title: t('group.staged'),
+          group: 'staged',
+          count: snapshotNow.staged.length,
+          rows: snapshotNow.staged.map(entry => React.createElement(FileRow, {
+            key: `staged:${entry.path}`,
+            entry,
+            actions: rowActions(entry, true, false),
+            t,
+          })),
+          actions: [{
+            id: 'unstage-all',
+            label: t('group.unstageAll'),
+            icon: 'unstage',
+            disabled: busy || snapshotNow.staged.length === 0,
+            run: unstageAll,
+          }, {
+            id: 'discard-staged',
+            label: t('group.discardStaged'),
+            icon: 'discard',
+            danger: true,
+            disabled: busy || snapshotNow.staged.length === 0,
+            run: discardStaged,
+          }],
+        }),
+        changeGroup(React, {
+          title: t('group.changes'),
+          group: 'unstaged',
+          count: snapshotNow.unstaged.length,
+          rows: snapshotNow.unstaged.map(entry => React.createElement(FileRow, {
+            key: `changes:${entry.path}`,
+            entry,
+            actions: rowActions(entry, false, false),
+            t,
+          })),
+          actions: [{
+            id: 'stage-all',
+            label: t('group.stageAll'),
+            icon: 'stage',
+            disabled: busy || snapshotNow.unstaged.length === 0,
+            run: stageAll,
+          }, {
+            id: 'discard-all',
+            label: t('group.discardAll'),
+            icon: 'discard',
+            danger: true,
+            disabled: busy || snapshotNow.unstaged.length === 0,
+            run: discardUnstaged,
+          }],
+        }),
+        snapshotNow.conflicts.length === 0 ? null : changeGroup(React, {
+          title: t('group.conflicts'),
+          group: 'conflicts',
+          tone: 'error',
+          count: snapshotNow.conflicts.length,
+          rows: snapshotNow.conflicts.map(entry => React.createElement(FileRow, {
+            key: `conflicted:${entry.path}`,
+            entry,
+            actions: rowActions(entry, false, true),
+            t,
+          })),
+          actions: [],
+        }),
+        React.createElement(StashGroup, stashProps()),
+      )
+    }
 
     if (snapshot === undefined) {
       return React.createElement('section', {
@@ -365,7 +538,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     // With nothing to show, the groups and the commit box would offer empty
     // controls next to a sentence saying exactly that. The stash group and the
     // history stay, because both describe the repository rather than the tree.
-    if (total === 0) {
+    if (total === 0 && conflict === null) {
       return React.createElement('section', {
         className: `${PREFIX}-root`,
         'data-git-panel': '',
@@ -385,73 +558,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       ...busy ? { 'data-git-busy': '' } : {},
     },
       React.createElement(BranchHeader, headerProps()),
-      React.createElement('div', { className: `${PREFIX}-body` },
-        notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
-        changeGroup(React, {
-          title: t('group.staged'),
-          group: 'staged',
-          count: snapshot.staged.length,
-          rows: snapshot.staged.map(entry => React.createElement(FileRow, {
-            key: `staged:${entry.path}`,
-            entry,
-            actions: rowActions(entry, true, false),
-            t,
-          })),
-          actions: [{
-            id: 'unstage-all',
-            label: t('group.unstageAll'),
-            icon: 'unstage',
-            disabled: busy || snapshot.staged.length === 0,
-            run: unstageAll,
-          }, {
-            id: 'discard-staged',
-            label: t('group.discardStaged'),
-            icon: 'discard',
-            danger: true,
-            disabled: busy || snapshot.staged.length === 0,
-            run: discardStaged,
-          }],
-        }),
-        changeGroup(React, {
-          title: t('group.changes'),
-          group: 'unstaged',
-          count: snapshot.unstaged.length,
-          rows: snapshot.unstaged.map(entry => React.createElement(FileRow, {
-            key: `changes:${entry.path}`,
-            entry,
-            actions: rowActions(entry, false, false),
-            t,
-          })),
-          actions: [{
-            id: 'stage-all',
-            label: t('group.stageAll'),
-            icon: 'stage',
-            disabled: busy || snapshot.unstaged.length === 0,
-            run: stageAll,
-          }, {
-            id: 'discard-all',
-            label: t('group.discardAll'),
-            icon: 'discard',
-            danger: true,
-            disabled: busy || snapshot.unstaged.length === 0,
-            run: discardUnstaged,
-          }],
-        }),
-        snapshot.conflicts.length === 0 ? null : changeGroup(React, {
-          title: t('group.conflicts'),
-          group: 'conflicts',
-          tone: 'error',
-          count: snapshot.conflicts.length,
-          rows: snapshot.conflicts.map(entry => React.createElement(FileRow, {
-            key: `conflicted:${entry.path}`,
-            entry,
-            actions: rowActions(entry, false, true),
-            t,
-          })),
-          actions: [],
-        }),
-        React.createElement(StashGroup, stashProps()),
-      ),
+      bodyElement(snapshot),
       CommitBox(React, {
         message,
         stagedCount: snapshot.staged.length,

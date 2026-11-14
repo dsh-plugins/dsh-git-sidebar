@@ -31,6 +31,8 @@ export interface BranchHeaderProps {
   createBranch(name: string): void
   sync(action: SyncAction): void
   stash(): void
+  /** Undo the merge or rebase the checkout is between. */
+  abort(): void
 }
 
 /** Which dropdown of the header is open, if any. */
@@ -151,7 +153,7 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
           props.stash()
         }) : null,
       ),
-      operation === null ? null : operationBar(React, t, operation),
+      operation === null ? null : operationBar(React, t, operation, busy, props.abort),
     )
   }
 }
@@ -178,7 +180,13 @@ function upstreamSits(
 }
 
 /** The bar a checkout in the middle of a merge or a rebase shows under the header. */
-function operationBar(React: ReactLike, t: Translate, operation: string): unknown {
+function operationBar(
+  React: ReactLike,
+  t: Translate,
+  operation: string,
+  busy: boolean,
+  abort: () => void,
+): unknown {
   return React.createElement('div', { className: `${PREFIX}-operation`, 'data-git-operation': operation },
     React.createElement('span', { className: `${PREFIX}-operation-text` },
       t(`operation.${operation}`, { operation })),
@@ -186,8 +194,9 @@ function operationBar(React: ReactLike, t: Translate, operation: string): unknow
       type: 'button',
       className: `${PREFIX}-operation-abort`,
       'data-git-abort': '',
-      disabled: true,
-      title: t('operation.abortLater'),
+      disabled: busy,
+      title: t('operation.abort'),
+      onClick: abort,
     }, t('operation.abort')),
   )
 }

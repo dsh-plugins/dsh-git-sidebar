@@ -7,7 +7,7 @@
  * re-reads it once for every outcome.
  */
 
-import type { SyncAction } from '../shared.ts'
+import type { OperationKind, SyncAction } from '../shared.ts'
 import type { GitRunner } from './git.ts'
 
 /** Longest a branch name may be, matching Git's own practical limit. */
@@ -151,4 +151,27 @@ export async function sync(git: GitRunner, action: SyncAction): Promise<void> {
  */
 export function isSyncAction(action: unknown): action is SyncAction {
   return action === 'fetch' || action === 'pull' || action === 'push'
+}
+
+/**
+ * Undo the operation the checkout is between.
+ * @param git - runner bound to the repository root.
+ * @param operation - which operation to abort.
+ * @returns nothing; the caller re-reads the snapshot.
+ */
+export async function abort(git: GitRunner, operation: OperationKind): Promise<void> {
+  switch (operation) {
+    case 'merge':
+      await git('merge', ['merge', '--abort'])
+      return
+    case 'rebase':
+      await git('rebase', ['rebase', '--abort'])
+      return
+    case 'cherry-pick':
+      await git('cherry-pick', ['cherry-pick', '--abort'])
+      return
+    case 'revert':
+      await git('revert', ['revert', '--abort'])
+      return
+  }
 }

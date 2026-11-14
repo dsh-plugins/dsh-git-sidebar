@@ -12,8 +12,8 @@
  */
 
 import type {
-  BranchList, CommitDetailArgs, CommitOutcome, DiffArgs, DiffPayload, HistoryPage, SnapshotProblem, StashEntry,
-  StatusSnapshot, SyncAction, WriteOutcome,
+  BranchList, CommitDetailArgs, CommitOutcome, ConflictChoice, ConflictContent, DiffArgs, DiffPayload, HistoryPage,
+  SnapshotProblem, StashEntry, StatusSnapshot, SyncAction, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_NAMESPACE } from '../shared.ts'
 import { gitSidebarContribution, type RemoteContribution, type ZodLike } from '../remote-descriptor.ts'
@@ -147,6 +147,13 @@ export interface GitSidebarRemote {
     readonly sessionId: string
     readonly action: SyncAction
   }): Promise<RemoteResult<WriteOutcome>>
+  conflict(args: { readonly sessionId: string; readonly path: string }): Promise<RemoteResult<ConflictContent>>
+  resolveConflict(args: {
+    readonly sessionId: string
+    readonly path: string
+    readonly choices: readonly ConflictChoice[]
+  }): Promise<RemoteResult<WriteOutcome>>
+  abortOperation(args: { readonly sessionId: string }): Promise<RemoteResult<WriteOutcome>>
 }
 
 /**
@@ -170,6 +177,9 @@ export interface GitSidebarApi {
   stashApply(sessionId: string, index: number, drop: boolean): Promise<WriteOutcome>
   stashDrop(sessionId: string, index: number): Promise<WriteOutcome>
   sync(sessionId: string, action: SyncAction): Promise<WriteOutcome>
+  conflict(sessionId: string, path: string): Promise<ConflictContent>
+  resolveConflict(sessionId: string, path: string, choices: readonly ConflictChoice[]): Promise<WriteOutcome>
+  abortOperation(sessionId: string): Promise<WriteOutcome>
 }
 
 /** The namespace mount, started at apply time and awaited by the first body that draws. */
@@ -338,6 +348,21 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
     },
     sync(sessionId: string, action: SyncAction): Promise<WriteOutcome> {
       return foldWrite(() => remote.sync({ sessionId, action }))
+    },
+    async conflict(sessionId: string, path: string): Promise<ConflictContent> {
+      try {
+        const result = await remote.conflict({ sessionId, path })
+        if (!result.ok) return { kind: 'error', message: result.error.message }
+        return result.value
+      } catch (error) {
+        return { kind: 'error', message: messageOf(error) }
+      }
+    },
+    resolveConflict(sessionId: string, path: string, choices: readonly ConflictChoice[]): Promise<WriteOutcome> {
+      return foldWrite(() => remote.resolveConflict({ sessionId, path, choices }))
+    },
+    abortOperation(sessionId: string): Promise<WriteOutcome> {
+      return foldWrite(() => remote.abortOperation({ sessionId }))
     },
   }
 }
