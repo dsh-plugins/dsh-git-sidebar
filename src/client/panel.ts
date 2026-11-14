@@ -37,7 +37,8 @@ import { conflictNotice, makeConflictView } from './conflict-view.ts'
 import { rangeBetween, selectionKey, type SelectionKey } from './list-model.ts'
 import type { RowSelectEvent } from './row.ts'
 import {
-  appendHistory, forgetHistory, invalidateSession, rememberStashes, rememberStatus, type PanelCache,
+  appendHistory, createPanelCache, forgetHistory, invalidateSession, rememberStashes, rememberStatus,
+  type PanelCache,
 } from './panel-cache.ts'
 import { makeProgress } from './progress.ts'
 
@@ -53,7 +54,7 @@ export interface PanelRuntime {
    * One instance per plugin activation, so a closed and reopened tab renders
    * what the previous mount already read instead of asking again.
    */
-  readonly cache: PanelCache
+  readonly cache?: PanelCache
   /** Drop the cached patches; a refresh is the reader saying the tree moved. */
   readonly clearDiffCache?: () => void
 }
@@ -142,7 +143,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
   const StashGroup = makeStashGroup(React)
   const History = makeHistory(React)
   const Progress = makeProgress(React)
-  const cache = runtime.cache
+  // A caller that supplies no cache still gets a working panel: the factory
+  // then owns an empty one, which behaves exactly like an always-cold cache.
+  const cache = runtime.cache ?? createPanelCache()
 
   /** The panel: one snapshot, one message, and the writes that change them. */
   function GitPanel(props: TabBodyProps): unknown {
@@ -300,10 +303,15 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * Run one write and settle the panel from its reply.
      * @param action - the Host call.
      * @param failure - the sentence to show when the Host gives no reason.
-     * @param movesLog - whether the write changes the newest rows of the log,
-     * which is what makes the cached history page stale.
+     * @param effect - what else the write left stale: the log's newest rows, the
+     * stash list, or neither. The snapshot never needs this, because every
+     * success already carries the new one.
      */
-    const write = (action: () => Promise<WriteOutcome>, failure: string, movesLog = false): void => {
+    const write = (
+      action: () => Promise<WriteOutcome>,
+      failure: string,
+      effect: 'log' | 'stashes' | 'both' | undefined = undefined,
+    ): void => {
       setNotice('')
       setBusy(true)
       void action()
@@ -315,8 +323,8 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
             // updated from that reply rather than by asking again.
             rememberStatus(cache, sessionId, outcome.snapshot)
             setSnapshot(outcome.snapshot)
-            loadStashes(true)
-            if (movesLog) dropHistory()
+            if (effect === 'stashes' || effect === 'both') loadStashes(true)
+            if (effect === 'log' || effect === 'both') dropHistory()
             return
           }
           const text = refusalText(t, outcome.problem, outcome.message, failure)
@@ -383,23 +391,23 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     }
 
     const stashCurrent = (): void => {
-      write(() => calls.stash(), t('notice.stashFailed'), true)
+      write(() => calls.stash(), t('notice.stashFailed'), 'both')
     }
     const stashApply = (index: number): void => {
-      write(() => calls.stashApply(index, false), t('notice.stashApplyFailed'))
+      write(() => calls.stashApply(index, false), t('notice.stashApplyFailed'), 'both')
     }
     const stashPop = (index: number): void => {
-      write(() => calls.stashApply(index, true), t('notice.stashPopFailed'))
+      write(() => calls.stashApply(index, true), t('notice.stashPopFailed'), 'both')
     }
     const stashDrop = (index: number): void => {
-      write(() => calls.stashDrop(index), t('notice.stashDropFailed'))
+      write(() => calls.stashDrop(index), t('notice.stashDropFailed'), 'stashes')
     }
 
     const checkout = (branch: string): void => {
-      write(() => calls.checkout(branch), t('notice.checkoutFailed'), true)
+      write(() => calls.checkout(branch), t('notice.checkoutFailed'), 'log')
     }
     const createBranch = (name: string): void => {
-      write(() => calls.createBranch(name), t('notice.createBranchFailed'), true)
+      write(() => calls.createBranch(name), t('notice.createBranchFailed'), 'log')
     }
     const sync = (action: SyncAction): void => {
       if (action !== 'fetch' && !confirmSync(t, action, current().upstream?.name ?? null)) return
@@ -507,7 +515,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     /** Merge one branch; a conflict leaves the merge in progress for the conflict view. */
     const merge = (branch: string): void => {
       if (!confirmMerge(t, branch, current().branch ?? null)) return
-      write(() => runtime.api.ready.then(api => api.mergeBranch(sessionId, branch)), t('notice.mergeFailed'), true)
+      write(() => runtime.api.ready.then(api => api.mergeBranch(sessionId, branch)), t('notice.mergeFailed'), 'log')
     }
 
     /**
@@ -618,6 +626,12 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       // The history head keeps the panel's own refresh, so a reader reading the
       // graph can ask for a new snapshot without scrolling back up.
       onRefresh: refresh,
+      // The cached page this Session already read: a reopened tab draws these
+      // rows on its first render instead of asking the Host again.
+      initial: cache.history.get(sessionId),
+      remember: (page: { commits: readonly CommitEntry[]; hasMore: boolean }) => {
+        appendHistory(cache, sessionId, page)
+      },
     })
 
     const ConflictView = makeConflictView(React)
@@ -809,6 +823,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         'data-git-cache': cacheState,
         ...busy ? { 'data-git-busy': '' } : {},
       },
+      React.createElement(Progress, { active: loading || refreshing }),
       React.createElement(BranchHeader, headerProps()),
       sessionId === ''
         ? stateBlock(React, t('state.noSession.title'), t('state.noSession.body'))
@@ -824,6 +839,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         'data-git-cache': cacheState,
         'data-problem': problem,
       },
+      React.createElement(Progress, { active: loading || refreshing }),
       React.createElement(BranchHeader, headerProps()),
       stateBlock(React, t(`state.${problem}.title`), t(`state.${problem}.body`), snapshot.message),
       historyElement(),
@@ -841,6 +857,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         'data-git-cache': cacheState,
         ...busy ? { 'data-git-busy': '' } : {},
       },
+      React.createElement(Progress, { active: loading || refreshing }),
       React.createElement(BranchHeader, headerProps()),
       notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
       stateBlock(React, t('state.clean.title'), t('state.clean.body')),
@@ -869,6 +886,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       'data-git-cache': cacheState,
       ...busy ? { 'data-git-busy': '' } : {},
     },
+      React.createElement(Progress, { active: loading || refreshing }),
       React.createElement(BranchHeader, headerProps()),
       bodyElement(snapshot),
       CommitBox(React, {

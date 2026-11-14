@@ -19,7 +19,7 @@
  */
 
 import type { CommitDetailArgs, DiffArgs, DiffPayload } from './shared.ts'
-import { DIFF_TAB_ID, PANEL_TAB_ID, PANEL_TAB_KIND } from './shared.ts'
+import { commitDiffAddress, DIFF_TAB_ID, diffAddress, PANEL_TAB_ID, PANEL_TAB_KIND } from './shared.ts'
 import {
   mountGitRemote, resolveZod, type GitClientContext, type GitRemoteHandle, type ReactLike, type TabBodyProps,
 } from './client/api.ts'
@@ -27,7 +27,7 @@ import { DIFF_DICTS, DIFF_LOCALE_NS, DIFF_STYLES, DIFF_TAB_DEFINITION, makeDiffB
 import { GitGuideIcon } from './client/icons.ts'
 import { makePanel } from './client/panel.ts'
 import { createPanelCache } from './client/panel-cache.ts'
-import { clearDiffCache } from './client/diff-cache.ts'
+import { clearDiffCache, readDiffCache, writeDiffCache } from './client/diff-cache.ts'
 import { PANEL_STYLES } from './client/styles.ts'
 
 /** This package's identity in the loader's module table and on the Remote contribution. */
@@ -329,21 +329,47 @@ function installStyles(ctx: GitClientContext, sheet: string, name: string): void
 }
 
 /**
- * Read the Session's checkout once per mount; the diff body reads its own file.
+ * Read one file's diff, through the cache when that address has been read.
+ *
+ * The cache is keyed by the address rather than by the arguments, so the same
+ * key the tab system uses is the key the payload is stored under: reopening a
+ * closed tab asks for the address it already had, and the cache answers.
  * @param remote - the mounted namespace, wrapped for the panel.
  * @returns the reader the diff body is given.
  */
 function diffReader(remote: GitRemoteHandle): (args: DiffArgs) => Promise<DiffPayload> {
-  return args => remote.ready.then(api => api.requestDiff(args))
+  return (args) => {
+    const address = diffAddress(args.path, args.staged)
+    const cached = readDiffCache(address)
+    if (cached !== undefined) return Promise.resolve(cached)
+    return remote.ready
+      .then(api => api.requestDiff(args))
+      .then((payload) => {
+        // Only a settled payload is stored: a failure would otherwise read as
+        // "already loaded" on the next open and hide the retry.
+        if (payload.kind !== 'error') writeDiffCache(address, payload)
+        return payload
+      })
+  }
 }
 
 /**
- * Read one commit's own patch, for the diff tab a history row opens.
+ * Read one commit's own patch, through the same cache.
  * @param remote - the mounted namespace, wrapped for the panel.
  * @returns the reader the diff body is given for a `commit/` address.
  */
 function commitReader(remote: GitRemoteHandle): (args: CommitDetailArgs) => Promise<DiffPayload> {
-  return args => remote.ready.then(api => api.requestCommit(args))
+  return (args) => {
+    const address = commitDiffAddress(args.sha)
+    const cached = readDiffCache(address)
+    if (cached !== undefined) return Promise.resolve(cached)
+    return remote.ready
+      .then(api => api.requestCommit(args))
+      .then((payload) => {
+        if (payload.kind !== 'error') writeDiffCache(address, payload)
+        return payload
+      })
+  }
 }
 
 loader.load({
