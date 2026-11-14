@@ -12,7 +12,8 @@ import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import {
   BranchList, BranchListArgs, CheckoutArgs, CommitArgs, CommitDetailArgs, CommitOutcome, ConflictArgs,
   ConflictChoice, ConflictContent, CreateBranchArgs, DeleteBranchArgs, DiffArgs, DiffPayload, DiscardArgs,
-  HistoryArgs, HistoryPage, HunkArgs, MergeBranchArgs, PathsArgs, ResolveConflictArgs, AbortArgs, StashApplyArgs,
+  GenerateMessageArgs, HistoryArgs, HistoryPage, HunkArgs, MergeBranchArgs, MessageDraft, PathsArgs,
+  ResolveConflictArgs, AbortArgs, StashApplyArgs,
   StashArgs, StashDropArgs, StashEntry, StashListArgs, StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_METHODS } from '../remote-descriptor.ts'
@@ -28,6 +29,7 @@ import type { DiffConfig } from './diff.ts'
 import { GitFailure, GitMissingError, gitIn } from './git.ts'
 import type { GitConfig, GitRunner } from './git.ts'
 import { applyHunk, hunkPatch } from './hunk.ts'
+import { draftMessage, type DraftContext, type MessageConfig } from './message.ts'
 import { readBranches, readCommitDiff, readHistory, readOperation, readStashes, readUpstream } from './refs.ts'
 import { NoRepository, messageOf, readIdentity, readStatus, topLevel, unavailable } from './status.ts'
 import { commitStaged, hasStagedChanges, write } from './write.ts'
@@ -42,6 +44,8 @@ export interface ServiceConfig extends DiffConfig {
   readonly gitCommand: string
   /** Deadline for one network command such as fetch, pull, or push. */
   readonly syncTimeoutMs: number
+  /** Route, prompt, and limits for the commit-message draft. */
+  readonly draft: MessageConfig
 }
 
 /** One resolved Session and its directory. */
@@ -561,6 +565,29 @@ export class GitSidebarService extends TypertRemoteService {
   }
 
   /** Resolve a Session and its directory together, for the read endpoints that need both. */
+  /**
+   * Ask the configured model for a commit message.
+   *
+   * The answer is a draft: the reader edits it before committing, so nothing
+   * here writes to the repository.
+   * @param args - the Session, and which side of the change to describe.
+   * @returns the draft, or the reason it could not be written.
+   */
+  async generateMessage(args?: GenerateMessageArgs): Promise<MessageDraft> {
+    const target = this.targetOf(args?.sessionId)
+    if (target === undefined) {
+      return { ok: false, problem: 'failed', message: 'no Session is open for this request' }
+    }
+    return await draftMessage(
+      this.home as DraftContext,
+      this.config.draft,
+      target.session,
+      target.directory,
+      args?.staged === true,
+      this.signalOf(),
+    )
+  }
+
   private targetOf(sessionId: unknown): Target | undefined {
     const session = this.sessionOf(sessionId)
     if (session === undefined) return undefined

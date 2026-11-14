@@ -173,6 +173,61 @@ export const PANEL_STYLES = `
   padding: 2px 4px 2px 8px;
 }
 
+/* A headless group keeps only its actions, which still need to sit at the end. */
+.gs-group-head-actions {
+  justify-content: flex-end;
+  padding: 2px 4px;
+}
+
+/*
+ * The three lists as a strip rather than a stack: a reader works in one of them
+ * at a time, and the two they are not in were taking the height the one they
+ * are in needed.
+ */
+.gs-tabs {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  align-items: stretch;
+  padding: 4px 4px 0;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.gs-tab {
+  display: inline-flex;
+  flex: 1 1 auto;
+  gap: 5px;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 5px 6px;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-sm) var(--dsw-radius-sm) 0 0;
+  cursor: pointer;
+}
+
+.gs-tab[data-active] {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+  background: var(--dsw-alias-interactive-bg-hover);
+  box-shadow: inset 0 -2px 0 var(--dsw-alias-brand-primary);
+}
+
+.gs-tab:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
+.gs-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gs-group-title {
   flex: none;
   margin: 0;
@@ -463,7 +518,8 @@ export const PANEL_STYLES = `
   align-items: center;
 }
 
-.gs-commit-recent {
+.gs-commit-recent,
+.gs-commit-draft {
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -479,7 +535,19 @@ export const PANEL_STYLES = `
   cursor: pointer;
 }
 
-.gs-commit-recent:disabled {
+/* The draft button reads as the notable one in this row: it is the only
+   control there that writes something on the reader's behalf. */
+.gs-commit-draft {
+  margin-left: auto;
+  color: var(--dsw-alias-brand-primary);
+}
+
+.gs-commit-draft[data-turning] svg {
+  animation: gs-spin 1s linear infinite;
+}
+
+.gs-commit-recent:disabled,
+.gs-commit-draft:disabled {
   cursor: default;
   opacity: 0.5;
 }
@@ -609,6 +677,27 @@ export const PANEL_STYLES = `
   background: transparent;
   border: 0;
   cursor: pointer;
+}
+
+/*
+ * The filter and the list's actions share one row: they are two halves of the
+ * same job, and the group used to spend a whole line on the second half.
+ */
+.gs-toolbar {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 4px 2px;
+}
+
+.gs-toolbar .gs-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.gs-toolbar-fill {
+  flex: 1 1 auto;
 }
 
 .gs-filter {
@@ -1275,6 +1364,139 @@ export const PANEL_STYLES = `
   cursor: default;
 }
 
+/* The panel's own modal: a layer over the panel, not the browser's chrome. */
+.gs-dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.gs-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 40%, rgb(0 0 0 / 45%));
+}
+
+.gs-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  width: min(420px, 100%);
+  max-height: 80vh;
+  padding: 16px;
+  overflow: auto;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-lg, 12px);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 32%);
+}
+
+.gs-dialog-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.gs-dialog-body {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.gs-dialog-list {
+  max-height: 180px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsh-font-family-code, ui-monospace, monospace);
+  font-size: 11px;
+  list-style: none;
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: var(--dsw-radius-sm);
+}
+
+.gs-dialog-warning {
+  margin: 0;
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.gs-dialog-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  outline: none;
+}
+
+.gs-dialog-input:focus {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.gs-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.gs-dialog-confirm,
+.gs-dialog-cancel {
+  box-sizing: border-box;
+  min-width: 72px;
+  height: 28px;
+  padding: 0 14px;
+  font: inherit;
+  border-radius: var(--dsw-radius-md);
+  cursor: pointer;
+}
+
+.gs-dialog-confirm {
+  color: var(--dsw-alias-label-primary-foreground);
+  font-weight: 600;
+  background: var(--dsw-alias-button-primary-fill);
+  border: 0;
+}
+
+.gs-dialog-confirm[data-danger] {
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-state-error-primary);
+}
+
+.gs-dialog-confirm:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  cursor: default;
+}
+
+.gs-dialog-cancel {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.gs-dialog-confirm:focus-visible,
+.gs-dialog-cancel:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
 /* Stashes */
 
 .gs-stash-group {
@@ -1322,6 +1544,7 @@ export const PANEL_STYLES = `
     background: var(--dsw-alias-interactive-bg-hover);
   }
 
+  .gs-tab:hover:not([data-active]),
   .gs-commit-more:hover,
   .gs-commit-menu-item:hover {
     background: var(--dsw-alias-interactive-bg-hover);

@@ -15,8 +15,8 @@
  */
 
 import type {
-  BranchList, ChangeEntry, CommitEntry, ConflictChoice, ConflictContent, GitIdentity, StashEntry, StatusSnapshot,
-  SyncAction, WriteOutcome,
+  BranchList, ChangeEntry, CommitEntry, ConflictChoice, ConflictContent, DraftProblem, GitIdentity, MessageDraft,
+  StashEntry, StatusSnapshot, SyncAction, WriteOutcome,
 } from '../shared.ts'
 import { DIFF_TAB_KIND, diffAddress } from '../shared.ts'
 import type {
@@ -41,6 +41,7 @@ import {
   appendHistory, createPanelCache, forgetHistory, invalidateSession, rememberStashes, rememberStatus,
   type PanelCache,
 } from './panel-cache.ts'
+import { makeDialogHost } from './dialog-host.ts'
 import { makeProgress } from './progress.ts'
 
 /** The panel's runtime facts, fixed for the life of the plugin. */
@@ -86,11 +87,20 @@ const REFUSAL_ALERTS: ReadonlySet<string> = new Set(['dirty', 'exists', 'invalid
 interface GroupAction {
   readonly id: string
   readonly label: string
-  readonly icon: 'stage' | 'unstage' | 'discard'
+  readonly icon: 'stage' | 'unstage' | 'discard' | 'undo'
   readonly danger?: boolean
   readonly disabled?: boolean
   run(): void
 }
+
+/**
+ * Which of the three lists the panel is showing.
+ *
+ * The three are read at once but used one at a time: a reader staging files
+ * wants the whole column for the list they are working in, not three lists
+ * sharing it.
+ */
+type Section = 'unstaged' | 'staged' | 'stashes'
 
 /** A conflicted file the reader has open, with the choices made so far. */
 interface OpenConflict {
@@ -121,6 +131,7 @@ interface SessionCalls {
   unstage(paths: readonly string[]): Promise<WriteOutcome>
   discard(paths: readonly string[], includeUntracked: boolean): Promise<WriteOutcome>
   commit(message: string, options?: { amend?: boolean; stageAll?: boolean }): ReturnType<GitSidebarApi['commit']>
+  generateMessage(staged: boolean): Promise<MessageDraft>
   branches(): Promise<BranchList>
   checkout(branch: string): Promise<WriteOutcome>
   createBranch(name: string, from?: string): Promise<WriteOutcome>
@@ -144,6 +155,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
   const StashGroup = makeStashGroup(React)
   const History = makeHistory(React)
   const Progress = makeProgress(React)
+  const DialogHost = makeDialogHost(React)
   // A caller that supplies no cache still gets a working panel: the factory
   // then owns an empty one, which behaves exactly like an always-cold cache.
   const cache = runtime.cache ?? createPanelCache()
@@ -164,6 +176,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const [message, setMessage] = React.useState('')
     const [amend, setAmend] = React.useState(false)
     const [recentOpen, setRecentOpen] = React.useState(false)
+    const [drafting, setDrafting] = React.useState(false)
     // Offered back as one-click messages. Seeded from the cached page and kept
     // current by the history's own remember hook, so this costs no request.
     const [recent, setRecent] = React.useState<readonly string[]>(subjectsOf(cache.history.get(sessionId)))
@@ -172,6 +185,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const [historyOpen, setHistoryOpen] = React.useState(true)
     const [conflict, setConflict] = React.useState<OpenConflict | null>(null)
     const [filter, setFilter] = React.useState('')
+    const [section, setSection] = React.useState<Section>('unstaged')
     const [selected, setSelected] = React.useState<readonly SelectionKey[]>([])
     const [anchor, setAnchor] = React.useState<string | null>(null)
     // Which read the first paint came from, which is what a test can observe
@@ -263,6 +277,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       stashApply: (index, drop) => runtime.api.ready.then(api => api.stashApply(sessionId, index, drop)),
       stashDrop: index => runtime.api.ready.then(api => api.stashDrop(sessionId, index)),
       sync: action => runtime.api.ready.then(api => api.sync(sessionId, action)),
+      generateMessage: staged => runtime.api.ready.then(api => api.generateMessage(sessionId, staged)),
       history: (limit, skip) => runtime.api.ready
         .then(api => api.history(sessionId, limit, skip))
         .catch(() => EMPTY_PAGE),
@@ -340,7 +355,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
           // A refusal the reader did not expect — a checkout declined for a
           // dirty tree, a branch name already taken — is stated where they are
           // looking as well as in the notice line, which a busy panel can hide.
-          if (REFUSAL_ALERTS.has(outcome.problem)) notify(text)
+          if (REFUSAL_ALERTS.has(outcome.problem)) void notify(t, text)
         })
     }
 
@@ -390,15 +405,19 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       if (entries.length === 0) return
       const files = entries.map(entry => entry.path)
       const untracked = entries.filter(entry => entry.status === 'untracked').map(entry => entry.path)
-      if (!confirmDiscard(t, { files, untracked })) return
-      clearSelection()
-      write(() => calls.discard(files, untracked.length > 0), t('notice.discardFailed'))
+      void confirmDiscard(t, { files, untracked }).then((agreed) => {
+        if (!agreed) return
+        clearSelection()
+        write(() => calls.discard(files, untracked.length > 0), t('notice.discardFailed'))
+      })
     }
     const discardStaged = (): void => {
       const files = current().staged.map(entry => entry.path)
       if (files.length === 0) return
-      if (!confirmDiscard(t, { files, untracked: [] })) return
-      write(() => calls.discard(files, false), t('notice.discardFailed'))
+      void confirmDiscard(t, { files, untracked: [] }).then((agreed) => {
+        if (!agreed) return
+        write(() => calls.discard(files, false), t('notice.discardFailed'))
+      })
     }
 
     const stashCurrent = (): void => {
@@ -430,8 +449,10 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * @param sha - the commit to check out.
      */
     const checkoutCommit = (sha: string): void => {
-      if (!confirmDetach(t, sha.slice(0, 7))) return
-      write(() => calls.checkout(sha), t('notice.checkoutFailed'), 'log')
+      void confirmDetach(t, sha.slice(0, 7)).then((agreed) => {
+        if (!agreed) return
+        write(() => calls.checkout(sha), t('notice.checkoutFailed'), 'log')
+      })
     }
 
     /**
@@ -443,9 +464,10 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * @param sha - the commit the branch starts at.
      */
     const branchFromCommit = (sha: string): void => {
-      const name = askBranchName(t, sha.slice(0, 7))
-      if (name === null) return
-      write(() => calls.createBranch(name, sha), t('notice.createBranchFailed'), 'log')
+      void askBranchName(t, sha.slice(0, 7)).then((name) => {
+        if (name === null) return
+        write(() => calls.createBranch(name, sha), t('notice.createBranchFailed'), 'log')
+      })
     }
 
     /**
@@ -458,15 +480,50 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const copyCommit = (sha: string): void => {
       const clipboard = navigator.clipboard
       if (clipboard === undefined) {
-        notify(t('notice.copyFailed'))
+        void notify(t, t('notice.copyFailed'))
         return
       }
       void clipboard.writeText(sha)
         .then(() => { setNotice(t('notice.copied', { short: sha.slice(0, 7) })) })
-        .catch(() => { notify(t('notice.copyFailed')) })
+        .catch(() => { void notify(t, t('notice.copyFailed')) })
     }
+    /**
+     * Ask the model for a commit message and put it in the field.
+     *
+     * The draft describes the index when anything is staged, because that is
+     * what the commit will actually contain; otherwise it describes the working
+     * tree, which is what the buttons would stage.
+     */
+    const draftMessage = (): void => {
+      setNotice('')
+      setDrafting(true)
+      void calls.generateMessage(current().staged.length > 0)
+        .catch((error: unknown) => ({
+          ok: false as const,
+          problem: 'failed' as const,
+          message: messageOf(error),
+        }))
+        .then((draft) => {
+          setDrafting(false)
+          if (!draft.ok) {
+            setNotice(draftRefusal(t, draft.problem, draft.message))
+            return
+          }
+          setMessage(draft.message)
+        })
+    }
+
     const sync = (action: SyncAction): void => {
-      if (action !== 'fetch' && !confirmSync(t, action, current().upstream?.name ?? null)) return
+      void (action === 'fetch'
+        ? Promise.resolve(true)
+        : confirmSync(t, action, current().upstream?.name ?? null)).then((agreed) => {
+        if (!agreed) return
+        runSync(action)
+      })
+    }
+
+    /** The read the confirmation guards: a sync the reader agreed to. */
+    const runSync = (action: SyncAction): void => {
       setNotice('')
       setBusy(true)
       void calls.sync(action)
@@ -533,13 +590,21 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
 
     const abortOperation = (): void => {
       if (current().operation === null || current().operation === undefined) return
-      if (!confirmAbort(t, String(current().operation))) return
-      write(() => runtime.api.ready.then(api => api.abortOperation(sessionId)), t('notice.abortFailed'))
+      void confirmAbort(t, String(current().operation)).then((agreed) => {
+        if (!agreed) return
+        write(() => runtime.api.ready.then(api => api.abortOperation(sessionId)), t('notice.abortFailed'))
+      })
     }
 
     /** Delete one branch; an unmerged branch asks again before forcing it. */
     const deleteBranch = (branch: string): void => {
-      if (!confirmDeleteBranch(t, branch)) return
+      void confirmDeleteBranch(t, branch).then((agreed) => {
+        if (agreed) removeBranch(branch)
+      })
+    }
+
+    /** The delete the confirmation guards. */
+    const removeBranch = (branch: string): void => {
       setBusy(true)
       setNotice('')
       void runtime.api.ready
@@ -562,16 +627,21 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
           // An unmerged branch is refused once so the reader can decide whether
           // its commits are worth losing; only the second answer forces it.
           setBusy(false)
-          if (!confirmForceDelete(t, branch)) return
-          write(() => runtime.api.ready.then(api => api.deleteBranch(sessionId, branch, true)),
-            t('notice.deleteFailed'))
+          void confirmForceDelete(t, branch).then((forced) => {
+            if (!forced) return
+            write(() => runtime.api.ready.then(api => api.deleteBranch(sessionId, branch, true)),
+              t('notice.deleteFailed'))
+          })
         })
     }
 
     /** Merge one branch; a conflict leaves the merge in progress for the conflict view. */
     const merge = (branch: string): void => {
-      if (!confirmMerge(t, branch, current().branch ?? null)) return
-      write(() => runtime.api.ready.then(api => api.mergeBranch(sessionId, branch)), t('notice.mergeFailed'), 'log')
+      void confirmMerge(t, branch, current().branch ?? null).then((agreed) => {
+        if (!agreed) return
+        write(() => runtime.api.ready.then(api => api.mergeBranch(sessionId, branch)),
+          t('notice.mergeFailed'), 'log')
+      })
     }
 
     /**
@@ -613,7 +683,14 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const commitAndPush = (stageAll: boolean): void => {
       const text = message.trim()
       if (text === '') return
-      if (!confirmSync(t, 'push', current().upstream?.name ?? null)) return
+      void confirmSync(t, 'push', current().upstream?.name ?? null).then((agreed) => {
+        if (!agreed) return
+        pushAfterCommit(text, stageAll)
+      })
+    }
+
+    /** The write the confirmation guards: a commit followed by its push. */
+    const pushAfterCommit = (text: string, stageAll: boolean): void => {
       setNotice('')
       setBusy(true)
       void calls.commit(text, { amend, stageAll })
@@ -667,8 +744,11 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       }
       const discard = (): void => {
         const untracked = entry.status === 'untracked'
-        if (!confirmDiscard(t, { files: [entry.path], untracked: untracked ? [entry.path] : [] })) return
-        write(() => calls.discard([entry.path], untracked), t('notice.discardFailed'))
+        void confirmDiscard(t, { files: [entry.path], untracked: untracked ? [entry.path] : [] })
+          .then((agreed) => {
+            if (!agreed) return
+            write(() => calls.discard([entry.path], untracked), t('notice.discardFailed'))
+          })
       }
       return [{
         id: 'stage',
@@ -677,7 +757,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         run: () => { write(() => calls.stage([entry.path]), t('notice.stageFailed')) },
       }, {
         id: 'discard',
-        icon: 'discard',
+        icon: 'undo',
         label: t('row.discard'),
         danger: true,
         run: discard,
@@ -827,62 +907,30 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
           close: () => { setConflict(null) },
         })
       }
-      return React.createElement('div', { className: `${PREFIX}-body` },
-        notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
-        React.createElement('input', {
-          type: 'search',
-          className: `${PREFIX}-filter`,
-          'data-git-filter': '',
-          value: filter,
-          placeholder: t('list.filter'),
-          'aria-label': t('list.filter'),
-          spellCheck: false,
-          onChange: (event: { target: { value: string } }) => { setFilter(event.target.value) },
-        }),
-        changeGroup(React, {
-          title: t('group.staged'),
-          group: 'staged',
-          count: snapshotNow.staged.length,
-          rows: visible(snapshotNow.staged, true).map(entry => React.createElement(FileRow, {
-            key: `staged:${entry.path}`,
-            entry,
-            actions: rowActions(entry, true, false),
-            t,
-            selected: selected.includes(selectionKey('staged', entry.path)),
-            onSelect: (event: RowSelectEvent) => {
-              selectRow('staged', visible(snapshotNow.staged, true), entry.path, event.shiftKey)
-            },
-          })),
-          actions: [{
-            id: 'unstage-all',
-            label: t('group.unstageAll'),
-            icon: 'unstage',
-            disabled: busy || snapshotNow.staged.length === 0,
-            run: () => { unstagePaths(pathsFor('staged', snapshotNow.staged.map(entry => entry.path))) },
-          }, {
-            id: 'discard-staged',
-            label: t('group.discardStaged'),
-            icon: 'discard',
-            danger: true,
-            disabled: busy || snapshotNow.staged.length === 0,
-            run: () => { discardPaths(pathsFor('staged', snapshotNow.staged.map(entry => entry.path))) },
-          }],
-        }),
-        changeGroup(React, {
-          title: t('group.changes'),
-          group: 'unstaged',
-          count: snapshotNow.unstaged.length,
-          rows: visible(snapshotNow.unstaged, false).map(entry => React.createElement(FileRow, {
-            key: `changes:${entry.path}`,
-            entry,
-            actions: rowActions(entry, false, false),
-            t,
-            selected: selected.includes(selectionKey('unstaged', entry.path)),
-            onSelect: (event: RowSelectEvent) => {
-              selectRow('unstaged', visible(snapshotNow.unstaged, false), entry.path, event.shiftKey)
-            },
-          })),
-          actions: [{
+      /**
+       * The actions the current list offers, drawn beside the filter.
+       *
+       * They live here rather than on the group so the toolbar and the list
+       * share one row: the group used to draw its own action row under the
+       * filter, which cost a whole line for two buttons.
+       */
+      const sectionActions: readonly GroupAction[] = section === 'staged'
+        ? [{
+          id: 'unstage-all',
+          label: t('group.unstageAll'),
+          icon: 'unstage',
+          disabled: busy || snapshotNow.staged.length === 0,
+          run: () => { unstagePaths(pathsFor('staged', snapshotNow.staged.map(entry => entry.path))) },
+        }, {
+          id: 'discard-staged',
+          label: t('group.discardStaged'),
+          icon: 'undo',
+          danger: true,
+          disabled: busy || snapshotNow.staged.length === 0,
+          run: () => { discardPaths(pathsFor('staged', snapshotNow.staged.map(entry => entry.path))) },
+        }]
+        : section === 'unstaged'
+          ? [{
             id: 'stage-all',
             label: t('group.stageAll'),
             icon: 'stage',
@@ -891,23 +939,26 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
           }, {
             id: 'discard-all',
             label: t('group.discardAll'),
-            icon: 'discard',
+            icon: 'undo',
             danger: true,
             disabled: busy || snapshotNow.unstaged.length === 0,
             run: () => { discardPaths(pathsFor('unstaged', snapshotNow.unstaged.map(entry => entry.path))) },
-          }],
+          }]
+          : []
+      return React.createElement('div', { className: `${PREFIX}-body` },
+        notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
+        sectionTabs(React, t, section, {
+          unstaged: snapshotNow.unstaged.length,
+          staged: snapshotNow.staged.length,
+          stashes: stashes.length,
+        }, setSection),
+        sectionToolbar(React, t, {
+          filter: section === 'stashes' ? undefined : filter,
+          onFilter: setFilter,
+          actions: sectionActions,
         }),
-        selected.length === 0 ? null : React.createElement('p', {
-          className: `${PREFIX}-selection`,
-          'data-git-selection': String(selected.length),
-          role: 'status',
-        }, t('list.selected', { count: selected.length }),
-        React.createElement('button', {
-          type: 'button',
-          className: `${PREFIX}-selection-clear`,
-          'data-git-selection-clear': '',
-          onClick: clearSelection,
-        }, t('list.clear'))),
+        // Conflicts stay above the tabs: an unmerged path blocks every other
+        // action, so it must not be hidden behind a tab the reader is not on.
         snapshotNow.conflicts.length === 0 ? null : changeGroup(React, {
           title: t('group.conflicts'),
           group: 'conflicts',
@@ -921,7 +972,52 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
           })),
           actions: [],
         }),
-        React.createElement(StashGroup, stashProps()),
+        section !== 'staged' ? null : changeGroup(React, {
+          title: t('group.staged'),
+          group: 'staged',
+          headless: true,
+          count: snapshotNow.staged.length,
+          rows: visible(snapshotNow.staged, true).map(entry => React.createElement(FileRow, {
+            key: `staged:${entry.path}`,
+            entry,
+            actions: rowActions(entry, true, false),
+            t,
+            selected: selected.includes(selectionKey('staged', entry.path)),
+            onSelect: (event: RowSelectEvent) => {
+              selectRow('staged', visible(snapshotNow.staged, true), entry.path, event.shiftKey)
+            },
+          })),
+          actions: [],
+        }),
+        section !== 'unstaged' ? null : changeGroup(React, {
+          title: t('group.changes'),
+          group: 'unstaged',
+          headless: true,
+          count: snapshotNow.unstaged.length,
+          rows: visible(snapshotNow.unstaged, false).map(entry => React.createElement(FileRow, {
+            key: `changes:${entry.path}`,
+            entry,
+            actions: rowActions(entry, false, false),
+            t,
+            selected: selected.includes(selectionKey('unstaged', entry.path)),
+            onSelect: (event: RowSelectEvent) => {
+              selectRow('unstaged', visible(snapshotNow.unstaged, false), entry.path, event.shiftKey)
+            },
+          })),
+          actions: [],
+        }),
+        selected.length === 0 ? null : React.createElement('p', {
+          className: `${PREFIX}-selection`,
+          'data-git-selection': String(selected.length),
+          role: 'status',
+        }, t('list.selected', { count: selected.length }),
+        React.createElement('button', {
+          type: 'button',
+          className: `${PREFIX}-selection-clear`,
+          'data-git-selection-clear': '',
+          onClick: clearSelection,
+        }, t('list.clear'))),
+        section !== 'stashes' ? null : React.createElement(StashGroup, { ...stashProps(), headless: true }),
       )
     }
 
@@ -937,6 +1033,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       sessionId === ''
         ? stateBlock(React, t('state.noSession.title'), t('state.noSession.body'))
         : skeleton(React),
+      React.createElement(DialogHost, null),
       )
     }
 
@@ -952,6 +1049,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       React.createElement(BranchHeader, headerProps()),
       stateBlock(React, t(`state.${problem}.title`), t(`state.${problem}.body`), snapshot.message),
       historyElement(),
+      React.createElement(DialogHost, null),
       )
     }
 
@@ -982,6 +1080,8 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         amend,
         recent,
         recentOpen,
+        drafting,
+        onDraft: draftMessage,
         onRecentToggle: () => { setRecentOpen(!recentOpen) },
         t,
         onChange: setMessage,
@@ -990,6 +1090,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         onSubmitAndPush: commitAndPush,
       }),
       historyElement(),
+      React.createElement(DialogHost, null),
       )
     }
 
@@ -1013,6 +1114,8 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         amend,
         recent,
         recentOpen,
+        drafting,
+        onDraft: draftMessage,
         onRecentToggle: () => { setRecentOpen(!recentOpen) },
         t,
         onChange: setMessage,
@@ -1021,6 +1124,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         onSubmitAndPush: commitAndPush,
       }),
       historyElement(),
+      React.createElement(DialogHost, null),
     )
   }
   return GitPanel
@@ -1075,6 +1179,23 @@ function refusalText(t: Translate, problem: string, message: string, fallback: s
   return message === '' ? fallback : message
 }
 
+/**
+ * The sentence a failed draft shows.
+ *
+ * Two of the four reasons are actionable and get their own wording: nothing to
+ * describe, and no model to ask. The other two carry the Host's own message,
+ * which is more specific than anything the panel could compose.
+ * @param t - the panel's translator.
+ * @param problem - why the draft could not be written.
+ * @param message - the Host's explanation.
+ * @returns the sentence to show.
+ */
+function draftRefusal(t: Translate, problem: DraftProblem, message: string): string {
+  if (problem === 'no-changes') return t('notice.draftEmpty')
+  if (problem === 'not-configured') return t('notice.draftUnconfigured')
+  return message === '' ? t('notice.draftFailed') : message
+}
+
 /** One group: its title, its count, its group-level actions, and its rows. */
 function changeGroup(
   React: ReactLike,
@@ -1085,6 +1206,13 @@ function changeGroup(
     readonly tone?: 'error'
     readonly rows: readonly unknown[]
     readonly actions: readonly GroupAction[]
+    /**
+     * Whether the group draws its own title and count.
+     *
+     * A group shown under a tab is already named by that tab, so only its
+     * actions and rows are drawn.
+     */
+    readonly headless?: boolean
   },
 ): unknown {
   const { title, count, rows, actions, tone } = props
@@ -1094,14 +1222,108 @@ function changeGroup(
     'data-tone': tone,
     'data-count': count,
   },
-  React.createElement('div', { className: `${PREFIX}-group-head` },
-    React.createElement('h3', { className: `${PREFIX}-group-title` }, title),
-    React.createElement('span', { className: `${PREFIX}-count` }, String(count)),
-    React.createElement('span', { className: `${PREFIX}-group-actions` },
-      ...actions.map(action => groupButton(React, action))),
-  ),
+  props.headless === true
+    ? actions.length === 0
+      ? null
+      : React.createElement('div', { className: `${PREFIX}-group-head ${PREFIX}-group-head-actions` },
+        React.createElement('span', { className: `${PREFIX}-group-actions` },
+          ...actions.map(action => groupButton(React, action))))
+    : React.createElement('div', { className: `${PREFIX}-group-head` },
+      React.createElement('h3', { className: `${PREFIX}-group-title` }, title),
+      React.createElement('span', { className: `${PREFIX}-count` }, String(count)),
+      React.createElement('span', { className: `${PREFIX}-group-actions` },
+        ...actions.map(action => groupButton(React, action)))),
   rows.length === 0 ? null : React.createElement('ul', { className: `${PREFIX}-list` }, ...rows),
   )
+}
+
+/** One tab: which list it shows, and what it is called. */
+interface SectionTab {
+  readonly id: Section
+  readonly label: string
+  readonly count: number
+}
+
+/**
+ * The three lists as a tab strip.
+ *
+ * A count of zero is still worth a tab: it is what tells a reader the index is
+ * empty without making them switch to look.
+ * @param React - the loader's React.
+ * @param t - the panel's translator.
+ * @param current - the list on screen.
+ * @param counts - how many entries each list holds.
+ * @param pick - called with the tab the reader chose.
+ * @returns the strip.
+ */
+function sectionTabs(
+  React: ReactLike,
+  t: Translate,
+  current: Section,
+  counts: { readonly unstaged: number; readonly staged: number; readonly stashes: number },
+  pick: (section: Section) => void,
+): unknown {
+  const tabs: readonly SectionTab[] = [
+    { id: 'unstaged', label: t('group.changes'), count: counts.unstaged },
+    { id: 'staged', label: t('group.staged'), count: counts.staged },
+    { id: 'stashes', label: t('stash.group'), count: counts.stashes },
+  ]
+  return React.createElement('div', {
+    className: `${PREFIX}-tabs`,
+    'data-git-tabs': '',
+    role: 'tablist',
+  },
+  ...tabs.map(tab => React.createElement('button', {
+    key: tab.id,
+    type: 'button',
+    className: `${PREFIX}-tab`,
+    role: 'tab',
+    'data-git-tab': tab.id,
+    'data-active': tab.id === current ? '' : undefined,
+    'aria-selected': tab.id === current ? 'true' : 'false',
+    onClick: () => { pick(tab.id) },
+  },
+  React.createElement('span', { className: `${PREFIX}-tab-label` }, tab.label),
+  React.createElement('span', { className: `${PREFIX}-count` }, String(tab.count)))),
+  )
+}
+
+/**
+ * The strip under the tabs: the filter, and the actions the current list offers.
+ *
+ * One row rather than two. The actions belong to the list the filter narrows, so
+ * a reader who types a filter and then stages everything does both in the same
+ * place instead of looking down a line for the second half of the same job.
+ * @param React - the loader's React.
+ * @param t - the panel's translator.
+ * @param view - the filter's value and setter, and the actions to draw.
+ * @returns the strip.
+ */
+function sectionToolbar(
+  React: ReactLike,
+  t: Translate,
+  view: {
+    /** Absent on a list that has nothing to narrow. */
+    readonly filter: string | undefined
+    readonly onFilter: (value: string) => void
+    readonly actions: readonly GroupAction[]
+  },
+): unknown {
+  return React.createElement('div', { className: `${PREFIX}-toolbar` },
+    view.filter === undefined
+      ? React.createElement('span', { className: `${PREFIX}-toolbar-fill` })
+      : React.createElement('input', {
+        type: 'search',
+        className: `${PREFIX}-filter`,
+        'data-git-filter': '',
+        value: view.filter,
+        placeholder: t('list.filter'),
+        'aria-label': t('list.filter'),
+        spellCheck: false,
+        onChange: (event: { target: { value: string } }) => { view.onFilter(event.target.value) },
+      }),
+    React.createElement('span', { className: `${PREFIX}-group-actions` },
+      ...view.actions.map(action => groupButton(React, action))))
 }
 
 /** One group-level action as an icon button, labelled for pointer and assistive technology. */

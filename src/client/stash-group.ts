@@ -23,6 +23,13 @@ export interface StashProps {
   readonly canStash: boolean
   readonly busy: boolean
   readonly t: Translate
+  /**
+   * Whether the group draws its own title and count.
+   *
+   * When the panel shows this group under a tab, the tab already names it, so
+   * only the store button and the entries are drawn.
+   */
+  readonly headless?: boolean
   stash(): void
   apply(index: number): void
   pop(index: number): void
@@ -98,26 +105,29 @@ export function makeStashGroup(React: ReactLike): (props: StashProps) => unknown
   function StashGroup(props: StashProps): unknown {
     const { entries, canStash, busy, t } = props
     if (entries.length === 0 && !canStash) return null
+    const store = React.createElement('button', {
+      type: 'button',
+      className: `${PREFIX}-action`,
+      'aria-label': t('stash.current'),
+      title: canStash ? t('stash.current') : t('stash.currentDisabled'),
+      'data-action': 'stash-current',
+      'data-git-action': 'stash-current',
+      'data-git-stash-current': '',
+      disabled: busy || !canStash,
+      onClick: props.stash,
+    }, Icon(React, 'stash'))
     return React.createElement('section', {
       className: `${PREFIX}-group ${PREFIX}-stash-group`,
       'data-git-stash': '',
       'data-count': entries.length,
     },
-    React.createElement('div', { className: `${PREFIX}-group-head` },
-      React.createElement('h3', { className: `${PREFIX}-group-title` }, t('stash.group')),
-      React.createElement('span', { className: `${PREFIX}-count` }, String(entries.length)),
-      React.createElement('span', { className: `${PREFIX}-group-actions` },
-        React.createElement('button', {
-          type: 'button',
-          className: `${PREFIX}-action`,
-          'aria-label': t('stash.current'),
-          title: canStash ? t('stash.current') : t('stash.currentDisabled'),
-          'data-action': 'stash-current',
-          'data-git-action': 'stash-current',
-          'data-git-stash-current': '',
-          disabled: busy || !canStash,
-          onClick: props.stash,
-        }, Icon(React, 'stash')))),
+    props.headless === true
+      ? React.createElement('div', { className: `${PREFIX}-group-head ${PREFIX}-group-head-actions` },
+        React.createElement('span', { className: `${PREFIX}-group-actions` }, store))
+      : React.createElement('div', { className: `${PREFIX}-group-head` },
+        React.createElement('h3', { className: `${PREFIX}-group-title` }, t('stash.group')),
+        React.createElement('span', { className: `${PREFIX}-count` }, String(entries.length)),
+        React.createElement('span', { className: `${PREFIX}-group-actions` }, store)),
     entries.length === 0
       ? React.createElement('p', { className: `${PREFIX}-group-note`, role: 'status' }, t('stash.empty'))
       : React.createElement('ul', { className: `${PREFIX}-list` },

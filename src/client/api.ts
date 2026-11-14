@@ -13,7 +13,7 @@
 
 import type {
   BranchList, CommitDetailArgs, CommitOutcome, ConflictChoice, ConflictContent, DiffArgs, DiffPayload, HistoryPage, HunkArgs,
-  SnapshotProblem, StashEntry, StatusSnapshot, SyncAction, WriteOutcome,
+  MessageDraft, SnapshotProblem, StashEntry, StatusSnapshot, SyncAction, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_NAMESPACE } from '../shared.ts'
 import { gitSidebarContribution, type RemoteContribution, type ZodLike } from '../remote-descriptor.ts'
@@ -162,6 +162,10 @@ export interface GitSidebarRemote {
     readonly force: boolean
   }): Promise<RemoteResult<WriteOutcome>>
   mergeBranch(args: { readonly sessionId: string; readonly branch: string }): Promise<RemoteResult<WriteOutcome>>
+  generateMessage(args: {
+    readonly sessionId: string
+    readonly staged: boolean
+  }): Promise<RemoteResult<MessageDraft>>
 }
 
 /**
@@ -192,6 +196,7 @@ export interface GitSidebarApi {
   unstageHunk(args: HunkArgs): Promise<WriteOutcome>
   deleteBranch(sessionId: string, branch: string, force: boolean): Promise<WriteOutcome>
   mergeBranch(sessionId: string, branch: string): Promise<WriteOutcome>
+  generateMessage(sessionId: string, staged: boolean): Promise<MessageDraft>
 }
 
 /** The namespace mount, started at apply time and awaited by the first body that draws. */
@@ -391,6 +396,11 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
     },
     mergeBranch(sessionId: string, branch: string): Promise<WriteOutcome> {
       return foldWrite(() => remote.mergeBranch({ sessionId, branch }))
+    },
+    async generateMessage(sessionId: string, staged: boolean): Promise<MessageDraft> {
+      const result = await remote.generateMessage({ sessionId, staged })
+      if (result.ok) return result.value
+      return { ok: false, problem: 'failed', message: result.error.message }
     },
   }
 }

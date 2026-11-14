@@ -40,10 +40,14 @@ export interface CommitBoxProps {
   readonly recent: readonly string[]
   /** Whether the recent-messages menu is open; the panel owns this. */
   readonly recentOpen: boolean
+  /** Whether a draft is being written, which spins the spark button. */
+  readonly drafting: boolean
   readonly t: Translate
   onChange(value: string): void
   onAmendChange(value: boolean): void
   onRecentToggle(): void
+  /** Ask a model to word the message. */
+  onDraft(): void
   /** Commit the index, or stage everything first when nothing is staged. */
   onSubmit(stageAll: boolean): void
   /** Commit, then push the branch. */
@@ -134,6 +138,16 @@ export function CommitBox(React: ReactLike, props: CommitBoxProps): unknown {
           onClick: () => { props.onRecentToggle() },
         }, Icon(React, 'clock', { size: 14 }))
         : null,
+      React.createElement('button', {
+        type: 'button',
+        className: `${PREFIX}-commit-draft`,
+        'data-git-draft': '',
+        'data-turning': props.drafting ? '' : undefined,
+        title: t('commit.draft'),
+        'aria-label': t('commit.draft'),
+        disabled: busy || props.drafting,
+        onClick: () => { props.onDraft() },
+      }, Icon(React, 'spark', { size: 14 })),
       recentOpen && recent.length > 0
         ? React.createElement('div', { className: `${PREFIX}-commit-recent-menu`, 'data-git-recent-menu': '', role: 'menu' },
           ...recent.map((subject) => React.createElement('button', {

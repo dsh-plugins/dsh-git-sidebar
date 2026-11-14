@@ -1,13 +1,13 @@
 /**
- * The one dialog the panel asks before it destroys anything.
+ * The wording of every question the panel asks before it destroys something.
  *
- * `window.confirm` is used deliberately: it is modal, keyboard-dismissible, and
- * owned by the browser, so a confirmation can never be missed behind the panel
- * or left open by a re-render. What this module owns is the wording — which
- * files are affected, and the extra sentence untracked files need.
+ * What a question says lives here; how it is drawn lives in `dialog-host.ts`,
+ * which renders the panel's own modal. A question states the file set it
+ * applies to rather than a count, because the reader is confirming paths.
  */
 
 import type { Translate } from './api.ts'
+import { askConfirm, askText, showNotice, type DialogAsk } from './dialog-host.ts'
 
 /** What one discard will touch. */
 export interface DiscardPrompt {
@@ -18,46 +18,50 @@ export interface DiscardPrompt {
 }
 
 /**
- * Name a set of paths in one line: one path verbatim, two to five all of them,
- * and more than five the first and the total.
+ * Name a set of paths: one path verbatim, two to five all of them, and more
+ * than five the first and the total.
  * @param t - the panel's translator.
  * @param paths - the paths to name.
- * @returns the catalogued phrase.
+ * @returns the paths to draw as a list.
  */
-export function nameFiles(t: Translate, paths: readonly string[]): string {
+export function nameFiles(t: Translate, paths: readonly string[]): readonly string[] {
   const first = paths[0] ?? ''
-  if (paths.length <= 1) return first
-  if (paths.length <= 5) return paths.join('\n')
-  return t('dialog.filesMany', { first, count: paths.length })
+  if (paths.length <= 1) return first === '' ? [] : [first]
+  if (paths.length <= 5) return paths
+  return [t('dialog.filesMany', { first, count: paths.length })]
 }
 
 /**
- * Compose the discard dialog's text.
+ * Compose the discard question.
  *
- * The list of affected paths is the point of the dialog: the reader confirms a
- * file set, not a count. Untracked files get their own paragraph because
- * restoring them is impossible, unlike a tracked file whose content survives in
- * the object database.
+ * Untracked files get their own sentence because restoring them is impossible,
+ * unlike a tracked file whose content survives in the object database.
  * @param t - the panel's translator.
  * @param prompt - the paths, and which of them are untracked.
- * @returns the message `window.confirm` shows.
+ * @returns the question.
  */
-export function formatDiscardPrompt(t: Translate, prompt: DiscardPrompt): string {
-  const lines = [t('dialog.discard.title'), '', t('dialog.discard.body'), '', nameFiles(t, prompt.files)]
-  if (prompt.untracked.length > 0) {
-    lines.push('', t('dialog.discard.untracked'), '', nameFiles(t, prompt.untracked))
+export function discardAsk(t: Translate, prompt: DiscardPrompt): DialogAsk {
+  return {
+    title: t('dialog.discard.title'),
+    body: t('dialog.discard.body'),
+    lines: nameFiles(t, prompt.files),
+    ...prompt.untracked.length === 0
+      ? {}
+      : { warning: `${t('dialog.discard.untracked')}\n${prompt.untracked.join('\n')}` },
+    danger: true,
+    confirm: t('dialog.confirm'),
+    cancel: t('dialog.cancel'),
   }
-  return lines.join('\n')
 }
 
 /**
- * Ask before discarding, and report the answer.
+ * Ask before discarding.
  * @param t - the panel's translator.
  * @param prompt - the paths, and which of them are untracked.
- * @returns true when the reader confirmed; false when they cancelled or reused their last dismissal.
+ * @returns whether the reader agreed.
  */
-export function confirmDiscard(t: Translate, prompt: DiscardPrompt): boolean {
-  return window.confirm(formatDiscardPrompt(t, prompt))
+export function confirmDiscard(t: Translate, prompt: DiscardPrompt): Promise<boolean> {
+  return askConfirm(discardAsk(t, prompt))
 }
 
 /** One stash entry that is about to be destroyed or applied. */
@@ -69,78 +73,62 @@ export interface StashPrompt {
 }
 
 /**
- * Compose the text of a stash confirmation.
- *
- * The entry is named by its position and by the message the reader wrote when
- * storing it, because the two together are what identify one row of the group.
+ * Ask before a stash entry is removed.
  * @param t - the panel's translator.
  * @param prompt - the entry and the action.
- * @returns the message `window.confirm` shows.
+ * @returns whether the reader agreed.
  */
-export function formatStashPrompt(t: Translate, prompt: StashPrompt): string {
-  const lines = [
-    t(prompt.action === 'pop' ? 'dialog.stash.popTitle' : 'dialog.stash.dropTitle'),
-    '',
-    t(prompt.action === 'pop' ? 'dialog.stash.popBody' : 'dialog.stash.dropBody'),
-    '',
-    `stash@{${prompt.index}}  ${prompt.subject}`,
-  ]
-  return lines.join('\n')
+export function confirmStash(t: Translate, prompt: StashPrompt): Promise<boolean> {
+  const popping = prompt.action === 'pop'
+  return askConfirm({
+    title: t(popping ? 'dialog.stash.popTitle' : 'dialog.stash.dropTitle'),
+    body: t(popping ? 'dialog.stash.popBody' : 'dialog.stash.dropBody'),
+    lines: [`stash@{${prompt.index}}  ${prompt.subject}`],
+    danger: !popping,
+    confirm: t('dialog.confirm'),
+    cancel: t('dialog.cancel'),
+  })
 }
 
 /**
- * Ask before a stash entry is removed, and report the answer.
- * @param t - the panel's translator.
- * @param prompt - the entry and the action.
- * @returns true when the reader confirmed.
- */
-export function confirmStash(t: Translate, prompt: StashPrompt): boolean {
-  return window.confirm(formatStashPrompt(t, prompt))
-}
-
-/**
- * Compose the text of a network-operation confirmation.
+ * Ask before a network operation that writes to the remote.
  *
- * A fetch only reads, so it never asks. A pull moves the local branch and a
- * push publishes commits other people can see, and both are worth one sentence
- * naming the upstream they touch.
+ * A fetch only reads, so it never asks. A pull moves the local branch and a push
+ * publishes commits other people can see, and both are worth naming the upstream
+ * they touch.
  * @param t - the panel's translator.
  * @param action - which operation is being confirmed.
  * @param upstream - the tracked ref, when the branch has one.
- * @returns the message `window.confirm` shows.
+ * @returns whether the reader agreed.
  */
-export function formatSyncPrompt(t: Translate, action: 'pull' | 'push', upstream: string | null): string {
+export function confirmSync(t: Translate, action: 'pull' | 'push', upstream: string | null): Promise<boolean> {
   const name = upstream ?? t('sync.noUpstream')
-  return [
-    t(action === 'pull' ? 'dialog.pull.title' : 'dialog.push.title'),
-    '',
-    t(action === 'pull' ? 'dialog.pull.body' : 'dialog.push.body', { name }),
-  ].join('\n')
-}
-
-/**
- * Ask before a network operation that writes to the remote, and report the answer.
- * @param t - the panel's translator.
- * @param action - which operation is being confirmed.
- * @param upstream - the tracked ref, when the branch has one.
- * @returns true when the reader confirmed.
- */
-export function confirmSync(t: Translate, action: 'pull' | 'push', upstream: string | null): boolean {
-  return window.confirm(formatSyncPrompt(t, action, upstream))
+  const pulling = action === 'pull'
+  return askConfirm({
+    title: t(pulling ? 'dialog.pull.title' : 'dialog.push.title'),
+    body: t(pulling ? 'dialog.pull.body' : 'dialog.push.body', { name }),
+    confirm: t('dialog.confirm'),
+    cancel: t('dialog.cancel'),
+  })
 }
 
 /**
  * Ask before undoing a merge or a rebase.
  *
- * The operation may have taken real work to reach, and aborting discards the
- * resolution of every conflict in it, so the choice is stated with what it
- * throws away rather than as a bare confirmation.
+ * Aborting discards the resolution of every conflict in the operation, so the
+ * question states what it throws away rather than asking a bare confirmation.
  * @param t - the panel's translator.
  * @param operation - the operation being aborted.
  * @returns whether the reader agreed.
  */
-export function confirmAbort(t: Translate, operation: string): boolean {
-  return window.confirm(t('dialog.abort', { operation }))
+export function confirmAbort(t: Translate, operation: string): Promise<boolean> {
+  return askConfirm({
+    title: t('dialog.abort.title'),
+    body: t('dialog.abort', { operation }),
+    danger: true,
+    confirm: t('dialog.confirm'),
+    cancel: t('dialog.cancel'),
+  })
 }
 
 /**
@@ -149,8 +137,14 @@ export function confirmAbort(t: Translate, operation: string): boolean {
  * @param branch - the branch to delete.
  * @returns whether the reader agreed.
  */
-export function confirmDeleteBranch(t: Translate, branch: string): boolean {
-  return window.confirm(t('dialog.deleteBranch', { branch }))
+export function confirmDeleteBranch(t: Translate, branch: string): Promise<boolean> {
+  return askConfirm({
+    title: t('dialog.deleteBranch.title'),
+    body: t('dialog.deleteBranch', { branch }),
+    danger: true,
+    confirm: t('dialog.confirm'),
+    cancel: t('dialog.cancel'),
+  })
 }
 
 /**
@@ -159,8 +153,14 @@ export function confirmDeleteBranch(t: Translate, branch: string): boolean {
  * @param branch - the unmerged branch.
  * @returns whether the reader agreed to lose those commits.
  */
-export function confirmForceDelete(t: Translate, branch: string): boolean {
-  return window.confirm(t('dialog.forceDeleteBranch', { branch }))
+export function confirmForceDelete(t: Translate, branch: string): Promise<boolean> {
+  return askConfirm({
+    title: t('dialog.forceDeleteBranch.title'),
+    body: t('dialog.forceDeleteBranch', { branch }),
+    danger: true,
+    confirm: t('dialog.confirm'),
+    cancel: t('dialog.cancel'),
+  })
 }
 
 /**
@@ -170,8 +170,13 @@ export function confirmForceDelete(t: Translate, branch: string): boolean {
  * @param current - the branch receiving the merge, when there is one.
  * @returns whether the reader agreed.
  */
-export function confirmMerge(t: Translate, branch: string, current: string | null): boolean {
-  return window.confirm(t('dialog.merge', { branch, current: current ?? '' }))
+export function confirmMerge(t: Translate, branch: string, current: string | null): Promise<boolean> {
+  return askConfirm({
+    title: t('dialog.merge.title'),
+    body: t('dialog.merge', { branch, current: current ?? '' }),
+    confirm: t('dialog.confirm'),
+    cancel: t('dialog.cancel'),
+  })
 }
 
 /**
@@ -183,31 +188,45 @@ export function confirmMerge(t: Translate, branch: string, current: string | nul
  * @param short - the abbreviated object name being checked out.
  * @returns whether the reader agreed.
  */
-export function confirmDetach(t: Translate, short: string): boolean {
-  return window.confirm(t('dialog.detach', { short }))
+export function confirmDetach(t: Translate, short: string): Promise<boolean> {
+  return askConfirm({
+    title: t('dialog.detach.title'),
+    body: t('dialog.detach', { short }),
+    confirm: t('dialog.confirm'),
+    cancel: t('dialog.cancel'),
+  })
 }
 
 /**
  * Ask for the name of a branch that starts at one commit.
  * @param t - the panel's translator.
  * @param short - the abbreviated object name the branch starts at.
- * @returns the trimmed name, or null when the reader cancelled.
+ * @returns the name, or null when the reader cancelled.
  */
-export function askBranchName(t: Translate, short: string): string | null {
-  const answer = window.prompt(t('dialog.branchFrom', { short }))
-  if (answer === null) return null
-  const name = answer.trim()
-  return name === '' ? null : name
+export function askBranchName(t: Translate, short: string): Promise<string | null> {
+  return askText({
+    title: t('dialog.branchFrom.title'),
+    body: t('dialog.branchFrom', { short }),
+    input: '',
+    confirm: t('dialog.confirm'),
+    cancel: t('dialog.cancel'),
+  })
 }
 
 /**
  * Report a refusal the reader asked for and Git declined.
  *
  * Switching branches over a dirty tree is the case this exists for: the request
- * looked reasonable, so silence would read as a bug, and the panel's own notice
- * line is easy to miss beside a header that did not change.
+ * looked reasonable, so silence would read as a bug.
+ * @param t - the panel's translator.
  * @param message - the sentence to show.
+ * @returns a promise that settles when the reader dismissed it.
  */
-export function notify(message: string): void {
-  window.alert(message)
+export function notify(t: Translate, message: string): Promise<void> {
+  return showNotice({
+    title: t('dialog.refused.title'),
+    body: message,
+    confirm: t('dialog.ok'),
+    cancel: t('dialog.ok'),
+  })
 }

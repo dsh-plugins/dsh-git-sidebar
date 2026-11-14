@@ -352,6 +352,27 @@ export interface SyncArgs {
   readonly action: SyncAction
 }
 
+/** Arguments of a commit-message draft. */
+export interface GenerateMessageArgs {
+  readonly sessionId: string
+  /** Read the index instead of the working tree. */
+  readonly staged: boolean
+}
+
+/**
+ * Why a draft could not be written.
+ *
+ * `not-configured` is the one a reader can fix: the bundle needs a model route
+ * before it can ask one for wording, and saying so is more useful than a generic
+ * failure.
+ */
+export type DraftProblem = 'no-changes' | 'not-configured' | 'too-large' | 'failed'
+
+/** The result of asking a model for a commit message. */
+export type MessageDraft =
+  | { readonly ok: true; readonly message: string }
+  | { readonly ok: false; readonly problem: DraftProblem; readonly message: string }
+
 /** Namespace the Host service binds and the client mounts under. */
 export const REMOTE_NAMESPACE = 'gitSidebar'
 
