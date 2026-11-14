@@ -97,7 +97,15 @@ export type CommitOutcome =
   | { readonly ok: false; readonly problem: CommitProblem; readonly message: string }
 
 /** Why a staging or discard request refused. */
-export type WriteProblem = 'no-paths' | 'failed' | 'dirty' | 'invalid-name' | 'exists' | 'stale'
+export type WriteProblem =
+  | 'no-paths'
+  | 'failed'
+  | 'dirty'
+  | 'invalid-name'
+  | 'exists'
+  | 'stale'
+  | 'current-branch'
+  | 'unmerged'
 
 /** The result of a staging or discard request; every success returns the new snapshot. */
 export type WriteOutcome =
@@ -202,6 +210,20 @@ export interface CreateBranchArgs {
   readonly name: string
   /** Commit or branch to start from; HEAD when omitted. */
   readonly from?: string
+}
+
+/** Arguments of a branch deletion. */
+export interface DeleteBranchArgs {
+  readonly sessionId: string
+  readonly branch: string
+  /** Delete even when the branch is not merged. */
+  readonly force: boolean
+}
+
+/** Arguments of a branch merge into the checked-out one. */
+export interface MergeBranchArgs {
+  readonly sessionId: string
+  readonly branch: string
 }
 
 /** One stash entry. */

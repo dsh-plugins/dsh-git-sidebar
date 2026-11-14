@@ -65,6 +65,7 @@ export const REMOTE_METHODS = [
   'stashes', 'stash', 'stashApply', 'stashDrop', 'sync',
   'conflict', 'resolveConflict', 'abortOperation',
   'stageHunk', 'unstageHunk',
+  'deleteBranch', 'mergeBranch',
 ] as const
 
 /** One method of the mounted namespace. */
@@ -149,6 +150,8 @@ export function gitSidebarContribution(zod: ZodLike): RemoteContribution {
       descriptor('abortOperation', () => ({ sessionId: zod.string() })),
       descriptor('stageHunk', () => ({ sessionId: zod.string(), path: zod.string(), hunk: zod.number() })),
       descriptor('unstageHunk', () => ({ sessionId: zod.string(), path: zod.string(), hunk: zod.number() })),
+      descriptor('deleteBranch', () => ({ sessionId: zod.string(), branch: zod.string(), force: zod.boolean() })),
+      descriptor('mergeBranch', () => ({ sessionId: zod.string(), branch: zod.string() })),
     ],
   }
 }

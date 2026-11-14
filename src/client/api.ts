@@ -156,6 +156,12 @@ export interface GitSidebarRemote {
   abortOperation(args: { readonly sessionId: string }): Promise<RemoteResult<WriteOutcome>>
   stageHunk(args: HunkArgs): Promise<RemoteResult<WriteOutcome>>
   unstageHunk(args: HunkArgs): Promise<RemoteResult<WriteOutcome>>
+  deleteBranch(args: {
+    readonly sessionId: string
+    readonly branch: string
+    readonly force: boolean
+  }): Promise<RemoteResult<WriteOutcome>>
+  mergeBranch(args: { readonly sessionId: string; readonly branch: string }): Promise<RemoteResult<WriteOutcome>>
 }
 
 /**
@@ -184,6 +190,8 @@ export interface GitSidebarApi {
   abortOperation(sessionId: string): Promise<WriteOutcome>
   stageHunk(args: HunkArgs): Promise<WriteOutcome>
   unstageHunk(args: HunkArgs): Promise<WriteOutcome>
+  deleteBranch(sessionId: string, branch: string, force: boolean): Promise<WriteOutcome>
+  mergeBranch(sessionId: string, branch: string): Promise<WriteOutcome>
 }
 
 /** The namespace mount, started at apply time and awaited by the first body that draws. */
@@ -377,6 +385,12 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
     },
     unstageHunk(args: HunkArgs): Promise<WriteOutcome> {
       return foldWrite(() => remote.unstageHunk(args))
+    },
+    deleteBranch(sessionId: string, branch: string, force: boolean): Promise<WriteOutcome> {
+      return foldWrite(() => remote.deleteBranch({ sessionId, branch, force }))
+    },
+    mergeBranch(sessionId: string, branch: string): Promise<WriteOutcome> {
+      return foldWrite(() => remote.mergeBranch({ sessionId, branch }))
     },
   }
 }

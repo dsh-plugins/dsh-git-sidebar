@@ -11,14 +11,15 @@
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import {
   BranchList, BranchListArgs, CheckoutArgs, CommitArgs, CommitDetailArgs, CommitOutcome, ConflictArgs,
-  ConflictChoice, ConflictContent, CreateBranchArgs, DiffArgs, DiffPayload, DiscardArgs, HistoryArgs, HistoryPage,
-  HunkArgs, PathsArgs, ResolveConflictArgs, AbortArgs, StashApplyArgs, StashArgs, StashDropArgs, StashEntry,
-  StashListArgs, StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
+  ConflictChoice, ConflictContent, CreateBranchArgs, DeleteBranchArgs, DiffArgs, DiffPayload, DiscardArgs,
+  HistoryArgs, HistoryPage, HunkArgs, MergeBranchArgs, PathsArgs, ResolveConflictArgs, AbortArgs, StashApplyArgs,
+  StashArgs, StashDropArgs, StashEntry, StashListArgs, StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_METHODS } from '../remote-descriptor.ts'
 import {
-  abort, checkout, createBranch, hasTrackedChanges, isValidBranchName, isSyncAction, stashApply,
-  stashDrop as stashDropEntry, stashPush, sync, validStashIndex,
+  abort, checkout, createBranch, deleteBranch as deleteBranchEntry, hasTrackedChanges, isValidBranchName,
+  isSyncAction, mergeBranch as mergeBranchEntry, stashApply, stashDrop as stashDropEntry, stashPush, sync,
+  validStashIndex,
 } from './branch.ts'
 import { readConflict, writeResolved } from './conflict.ts'
 import type { HostContext, HostSession } from './context.ts'
@@ -191,6 +192,60 @@ export class GitSidebarService extends TypertRemoteService {
         return { ok: false, problem: 'dirty', message: 'the working tree has changes a checkout would lose' }
       }
       await createBranch(git, name, from)
+      return null
+    })
+  }
+
+  /**
+   * Delete a local branch.
+   * @param args - the Session, the branch, and whether an unmerged branch goes too.
+   * @returns the new snapshot, or the refusal.
+   */
+  async deleteBranch(args?: DeleteBranchArgs): Promise<WriteOutcome> {
+    const branch = typeof args?.branch === 'string' ? args.branch.trim() : ''
+    if (branch.length === 0) return { ok: false, problem: 'no-paths', message: 'a branch needs a name' }
+    const force = args?.force === true
+    return await this.writeWith(args?.sessionId, async (git, session, directory) => {
+      const listed = await readBranches(this.home, this.config, session, directory, this.signalOf())
+      if (branch === listed.current) {
+        return { ok: false, problem: 'current-branch', message: `cannot delete the checked-out branch ${branch}` }
+      }
+      if (!listed.local.includes(branch)) {
+        return { ok: false, problem: 'invalid-name', message: `no local branch is named ${branch}` }
+      }
+      // The helpers report a named outcome instead of returning a refusal,
+      // because an unmerged branch is the one case the client retries.
+      const deleted = await deleteBranchEntry(git, branch, force)
+      switch (deleted.kind) {
+        case 'deleted':
+          return null
+        case 'unmerged':
+          return { ok: false, problem: 'unmerged', message: deleted.message }
+        case 'failed':
+          return { ok: false, problem: 'failed', message: deleted.message }
+      }
+    })
+  }
+
+  /**
+   * Merge a branch into the checked-out one.
+   *
+   * A conflict is reported as success: the merge is in progress and the
+   * snapshot says so, which is how the client offers the conflict view. Only a
+   * merge that never started is a refusal.
+   * @param args - the Session and the branch to merge.
+   * @returns the new snapshot, or the refusal.
+   */
+  async mergeBranch(args?: MergeBranchArgs): Promise<WriteOutcome> {
+    const branch = typeof args?.branch === 'string' ? args.branch.trim() : ''
+    if (branch.length === 0) return { ok: false, problem: 'no-paths', message: 'a branch needs a name' }
+    return await this.writeWith(args?.sessionId, async (git, session, directory) => {
+      const listed = await readBranches(this.home, this.config, session, directory, this.signalOf())
+      if (!listed.local.includes(branch)) {
+        return { ok: false, problem: 'invalid-name', message: `no local branch is named ${branch}` }
+      }
+      const merge = await mergeBranchEntry(git, branch)
+      if (merge.kind === 'failed') return { ok: false, problem: 'failed', message: merge.message }
       return null
     })
   }

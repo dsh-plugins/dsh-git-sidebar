@@ -144,6 +144,37 @@ export function confirmAbort(t: Translate, operation: string): boolean {
 }
 
 /**
+ * Ask before deleting a local branch.
+ * @param t - the panel's translator.
+ * @param branch - the branch to delete.
+ * @returns whether the reader agreed.
+ */
+export function confirmDeleteBranch(t: Translate, branch: string): boolean {
+  return window.confirm(t('dialog.deleteBranch', { branch }))
+}
+
+/**
+ * Ask again when the branch holds commits that are in no other branch.
+ * @param t - the panel's translator.
+ * @param branch - the unmerged branch.
+ * @returns whether the reader agreed to lose those commits.
+ */
+export function confirmForceDelete(t: Translate, branch: string): boolean {
+  return window.confirm(t('dialog.forceDeleteBranch', { branch }))
+}
+
+/**
+ * Ask before merging one branch into the checked-out one.
+ * @param t - the panel's translator.
+ * @param branch - the branch being merged in.
+ * @param current - the branch receiving the merge, when there is one.
+ * @returns whether the reader agreed.
+ */
+export function confirmMerge(t: Translate, branch: string, current: string | null): boolean {
+  return window.confirm(t('dialog.merge', { branch, current: current ?? '' }))
+}
+
+/**
  * Report a refusal the reader asked for and Git declined.
  *
  * Switching branches over a dirty tree is the case this exists for: the request

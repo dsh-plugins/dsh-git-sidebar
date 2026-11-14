@@ -1,6 +1,6 @@
 /**
- * The write-shaped P1 operations: checkout, branch creation, stashing, and the
- * network sync.
+ * The write-shaped branch operations: checkout, creation, deletion, merge,
+ * stashing, the network sync, and aborting an interrupted operation.
  *
  * Each helper performs the Git calls one request needs and lets the service
  * decide the refusal code; none of them reads a snapshot, because the service
@@ -9,9 +9,28 @@
 
 import type { OperationKind, SyncAction } from '../shared.ts'
 import type { GitRunner } from './git.ts'
+import { firstLine } from './parse.ts'
 
 /** Longest a branch name may be, matching Git's own practical limit. */
 const MAX_BRANCH_NAME = 240
+
+/** The one line `git branch -d` prints when the branch holds unmerged commits. */
+const NOT_FULLY_MERGED = /not fully merged/i
+
+/** The marker Git prints, on either stream, when a merge stopped on a conflict. */
+const CONFLICT = /\bCONFLICT\b/
+
+/** What a branch deletion did. */
+export type BranchDeletion =
+  | { readonly kind: 'deleted' }
+  | { readonly kind: 'unmerged'; readonly message: string }
+  | { readonly kind: 'failed'; readonly message: string }
+
+/** What a merge did: a clean result, a conflict left in the checkout, or a refusal. */
+export type BranchMerge =
+  | { readonly kind: 'merged' }
+  | { readonly kind: 'conflict' }
+  | { readonly kind: 'failed'; readonly message: string }
 
 /** Most stash entries the panel addresses by index. */
 const MAX_STASH_INDEX = 999
@@ -53,6 +72,63 @@ export async function isValidBranchName(git: GitRunner, name: string): Promise<b
   if (name.length === 0 || name.length > MAX_BRANCH_NAME) return false
   const check = await git('check-ref-format', ['check-ref-format', '--branch', name], [0, 1, 128])
   return check.exitCode === 0
+}
+
+/**
+ * Delete a local branch, reporting an unmerged branch as its own outcome.
+ *
+ * The name is a positional argument, not a pathspec, so no `--` precedes it:
+ * `git branch -d -- other` would read `other` as an option terminator. An
+ * unmerged branch is not a failure of the request, because the user can retry
+ * it with `force`; Git answers both cases with exit 1, so the diagnostic line
+ * is what separates them.
+ * @param git - runner bound to the repository root.
+ * @param branch - the local branch to delete.
+ * @param force - delete even when the branch holds unmerged commits.
+ * @returns what became of the branch.
+ */
+export async function deleteBranch(git: GitRunner, branch: string, force: boolean): Promise<BranchDeletion> {
+  const deletion = await git('branch', ['branch', force ? '-D' : '-d', branch], [0, 1, 128])
+  if (deletion.exitCode === 0) return { kind: 'deleted' }
+  const message = firstLine(deletion.stderr.length > 0 ? deletion.stderr : deletion.stdout)
+  if (!force && NOT_FULLY_MERGED.test(message)) return { kind: 'unmerged', message }
+  return { kind: 'failed', message }
+}
+
+/**
+ * Merge a branch into the checked-out one, leaving a conflict in the checkout.
+ *
+ * A conflict is a normal result: Git exits 1 and stops mid-merge, with the
+ * markers in the working tree and `MERGE_HEAD` set. The snapshot call that
+ * follows then reports `operation: 'merge'` and the conflicted paths, which is
+ * what the panel needs to offer the conflict view. Exit 1 alone is not enough
+ * to claim a conflict, because an unknown revision also exits 1, so the merge
+ * state is confirmed through `MERGE_HEAD`. `--no-edit` keeps Git from opening
+ * an editor, and `--quiet` drops the stat summary it would otherwise print.
+ * @param git - runner bound to the repository root.
+ * @param branch - the branch to merge into the checkout.
+ * @returns whether the merge finished, stopped on a conflict, or refused.
+ */
+export async function mergeBranch(git: GitRunner, branch: string): Promise<BranchMerge> {
+  const merge = await git('merge', ['merge', '--no-edit', '--quiet', branch], [0, 1, 128])
+  if (merge.exitCode === 0) return { kind: 'merged' }
+  // Exit 1 is Git's answer both to a conflict and to a name it cannot merge, so
+  // the conflict claim also needs the marker or the merge state Git leaves behind.
+  if (merge.exitCode === 1 && (CONFLICT.test(`${merge.stdout}${merge.stderr}`) || await mergingIn(git))) {
+    return { kind: 'conflict' }
+  }
+  const message = firstLine(merge.stderr.length > 0 ? merge.stderr : merge.stdout)
+  return { kind: 'failed', message }
+}
+
+/**
+ * Report whether the checkout is between a merge whose result is not committed.
+ * @param git - runner bound to the repository root.
+ * @returns whether `MERGE_HEAD` resolves.
+ */
+async function mergingIn(git: GitRunner): Promise<boolean> {
+  const head = await git('rev-parse', ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], [0, 1, 128])
+  return head.exitCode === 0
 }
 
 /**

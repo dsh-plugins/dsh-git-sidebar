@@ -33,6 +33,23 @@ export interface BranchHeaderProps {
   stash(): void
   /** Undo the merge or rebase the checkout is between. */
   abort(): void
+  /** Delete one local branch, after the picker's own confirmation. */
+  deleteBranch(branch: string): void
+  /** Merge one local branch into the checked-out one. */
+  mergeBranch(branch: string): void
+}
+
+/**
+ * The branches the operations menu offers to merge.
+ *
+ * The checked-out branch is left out: merging a branch into itself is a no-op
+ * Git reports as "Already up to date", which would read as a broken control.
+ * @param branches - the listing the picker loaded, when it has loaded.
+ * @returns the local branch names worth offering.
+ */
+function mergeable(branches: BranchList | undefined): string[] {
+  if (branches === undefined) return []
+  return branches.local.filter(name => name !== branches.current)
 }
 
 /** Which dropdown of the header is open, if any. */
@@ -51,7 +68,9 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
     const [draft, setDraft] = React.useState('')
 
     React.useEffect(() => {
-      if (menu !== 'branch') return
+      // Both menus name branches: the picker lists them, and the operations menu
+      // offers them to merge, so either open reads the list.
+      if (menu === 'none') return
       let live = true
       setBranches(undefined)
       void props.listBranches()
@@ -151,6 +170,9 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
         }, () => {
           setMenu('none')
           props.stash()
+        }, mergeable(branches), (branch) => {
+          setMenu('none')
+          props.mergeBranch(branch)
         }) : null,
       ),
       operation === null ? null : operationBar(React, t, operation, busy, props.abort),
@@ -227,7 +249,7 @@ function picker(
     : local.length === 0
       ? React.createElement('p', { className: `${PREFIX}-menu-note`, role: 'status' }, t('branch.empty'))
       : React.createElement('ul', { className: `${PREFIX}-branch-list` },
-        ...local.map(name => React.createElement('li', { key: name },
+        ...local.map(name => React.createElement('li', { key: name, className: `${PREFIX}-branch-item` },
           React.createElement('button', {
             type: 'button',
             className: `${PREFIX}-branch-option`,
@@ -242,7 +264,18 @@ function picker(
           name === current ? Icon(React, 'check', { size: 16 }) : React.createElement('span', {
             className: `${PREFIX}-branch-space`,
           }),
-          React.createElement('span', { className: `${PREFIX}-branch-option-name` }, name)))),
+          React.createElement('span', { className: `${PREFIX}-branch-option-name` }, name)),
+          // The checked-out branch has no delete control: Git refuses it, so
+          // offering the button would only produce a refusal.
+          name === current ? null : React.createElement('button', {
+            type: 'button',
+            className: `${PREFIX}-branch-delete`,
+            'data-git-branch-delete': name,
+            disabled: busy,
+            title: t('branch.delete'),
+            'aria-label': t('branch.delete'),
+            onClick: () => { props.deleteBranch(name) },
+          }, Icon(React, 'discard', { size: 16 })))),
       ),
   React.createElement('div', { className: `${PREFIX}-new-branch` },
     React.createElement('input', {
@@ -276,7 +309,7 @@ function picker(
   )
 }
 
-/** The operations menu: fetch, pull, push, and one stash. */
+/** The operations menu: fetch, pull, push, one stash, and merges. */
 function operations(
   React: ReactLike,
   props: BranchHeaderProps,
@@ -285,6 +318,8 @@ function operations(
   fetch: () => void,
   sync: (action: SyncAction) => void,
   stash: () => void,
+  localBranches: readonly string[],
+  merge: (branch: string) => void,
 ): unknown {
   const { t } = props
   const items = [
@@ -315,6 +350,19 @@ function operations(
     disabled: busy || !usable,
     onClick: stash,
   }, Icon(React, 'stash'), React.createElement('span', null, t('stash.current'))),
+  React.createElement('span', { className: `${PREFIX}-menu-sep`, role: 'separator' }),
+  ...(localBranches.length === 0
+    ? []
+    : [React.createElement('p', { key: 'merge-label', className: `${PREFIX}-menu-title` }, t('branch.mergeInto'))]),
+  ...localBranches.map(name => React.createElement('button', {
+    key: `merge:${name}`,
+    type: 'button',
+    className: `${PREFIX}-menu-item`,
+    'data-git-merge': name,
+    role: 'menuitem',
+    disabled: busy || !usable,
+    onClick: () => { merge(name) },
+  }, Icon(React, 'merge'), React.createElement('span', null, name))),
   )
 }
 

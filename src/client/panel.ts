@@ -25,7 +25,9 @@ import type {
 import { messageOf, unavailableSnapshot } from './api.ts'
 import { makeBranchHeader, type BranchHeaderProps } from './branch-header.ts'
 import { CommitBox } from './commit-box.ts'
-import { confirmAbort, confirmDiscard, confirmSync, notify } from './dialog.ts'
+import {
+  confirmAbort, confirmDeleteBranch, confirmDiscard, confirmForceDelete, confirmMerge, confirmSync, notify,
+} from './dialog.ts'
 import { makeHistory } from './history.ts'
 import { Icon } from './icons.ts'
 import { makeFileRow, type RowAction } from './row.ts'
@@ -327,6 +329,41 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       write(() => runtime.api.ready.then(api => api.abortOperation(sessionId)), t('notice.abortFailed'))
     }
 
+    /** Delete one branch; an unmerged branch asks again before forcing it. */
+    const deleteBranch = (branch: string): void => {
+      if (!confirmDeleteBranch(t, branch)) return
+      setBusy(true)
+      setNotice('')
+      void runtime.api.ready
+        .then(api => api.deleteBranch(sessionId, branch, false))
+        .catch((error: unknown) => ({ ok: false as const, problem: 'failed' as const, message: messageOf(error) }))
+        .then(async (outcome) => {
+          if (outcome.ok) {
+            setBusy(false)
+            setSnapshot(outcome.snapshot)
+            return
+          }
+          if (outcome.problem !== 'unmerged') {
+            setBusy(false)
+            const text = refusalText(t, outcome.problem, outcome.message, t('notice.deleteFailed'))
+            setNotice(text)
+            return
+          }
+          // An unmerged branch is refused once so the reader can decide whether
+          // its commits are worth losing; only the second answer forces it.
+          setBusy(false)
+          if (!confirmForceDelete(t, branch)) return
+          write(() => runtime.api.ready.then(api => api.deleteBranch(sessionId, branch, true)),
+            t('notice.deleteFailed'))
+        })
+    }
+
+    /** Merge one branch; a conflict leaves the merge in progress for the conflict view. */
+    const merge = (branch: string): void => {
+      if (!confirmMerge(t, branch, current().branch ?? null)) return
+      write(() => runtime.api.ready.then(api => api.mergeBranch(sessionId, branch)), t('notice.mergeFailed'))
+    }
+
     /**
      * Commit the written message, amending or staging everything when asked.
      * @param stageAll - stage every tracked change first, for a commit with an
@@ -403,6 +440,8 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       sync,
       stash: stashCurrent,
       abort: abortOperation,
+      deleteBranch,
+      mergeBranch: merge,
     })
 
     const stashProps = (): StashProps => ({
