@@ -48,6 +48,14 @@ export const Config = z.object({
   draftMaxOutputTokens: z.number().min(16).max(8192).default(512)
     .description('Output-token cap for the draft.'),
   draftTimeoutMs: z.number().min(1000).max(300000).default(45000).description('Deadline for one draft.'),
+  scanDepth: z.number().min(0).max(8).default(2)
+    .description('How many levels below the Session directory to scan for checkouts; the directory is depth 0.'),
+  scanExclude: z.array(z.string()).default([])
+    .description('Extra blacklist rules: a regular expression matched against each directory name.'),
+  scanDefaultExclude: z.boolean().default(true)
+    .description('Apply the built-in blacklist (build, node_modules, .gradle, and similar) during the scan.'),
+  scanMaxDirectories: z.number().min(16).max(200000).default(5000)
+    .description('Largest number of directories one scan may visit before it reports a truncated list.'),
 })
 
 /** Resolved configuration handed to the service. */
@@ -64,6 +72,10 @@ export type GitSidebarConfig = {
   draftMaxInputBytes: number
   draftMaxOutputTokens: number
   draftTimeoutMs: number
+  scanDepth: number
+  scanExclude: string[]
+  scanDefaultExclude: boolean
+  scanMaxDirectories: number
 }
 
 /**
@@ -79,6 +91,12 @@ function serviceConfig(config: GitSidebarConfig): ServiceConfig {
     && typeof config.draftModel === 'string' && config.draftModel.trim().length > 0
   return {
     ...config,
+    scan: {
+      maxDepth: config.scanDepth,
+      exclude: config.scanExclude,
+      useDefaultExclude: config.scanDefaultExclude,
+      maxDirectories: config.scanMaxDirectories,
+    },
     draft: {
       ...config,
       ...paired

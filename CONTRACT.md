@@ -47,10 +47,41 @@ B 在 `src/client.ts` 里 import 这两个并按 `ctx.slots.register` 注册，�
 | `stash` | `StashArgs` | `WriteOutcome` | P1 |
 | `stashApply` | `StashApplyArgs` | `WriteOutcome` | P1 |
 | `sync` | `SyncArgs` | `WriteOutcome` | P1 |
+| `repositories` | `RepositoriesArgs` | `RepositoryList` | 多仓库 |
+| `selectRepository` | `SelectRepositoryArgs` | `SelectOutcome` | 多仓库 |
 
 全部类型定义见 `src/shared.ts`。**字段名以该文件为准，不要另起名字。**
 
 `WriteProblem` 在 P1 增加 `dirty`（有未提交改动，拒绝切换分支）、`invalid-name`、`exists`。
+
+### 多仓库：选中状态在宿主
+
+`status`、`diff`、`stage`、`commit`、`history`、`branches`、`stashes`、`conflict`、`generateMessage` 都是
+「读这个会话的仓库」，没有仓库参数。要支持一个工作目录下的多个仓库而**不改这 24 个方法的签名**，
+选中状态放在宿主服务的 `Map<sessionId, root>` 里：
+
+- 未选中时行为与以前完全一致（用会话工作目录）。
+- `selectRepository({ sessionId, root })` 先用 `git rev-parse --show-toplevel` 校验 `root` 确实是某个
+  仓库的顶层，再把该 root 记到会话上；`root` 省略或空串表示回到工作目录。
+- 选中随宿主进程生命周期存在，**宿主重启后丢失**，面板回到工作目录的仓库。
+- diff 标签页没有仓库参数，正因为状态在宿主，它才会自动跟随当前选中的仓库。
+
+扫描（`src/host/repos.ts`）只读文件系统，不 spawn git；只有「会话工作目录所属仓库」用一次
+`rev-parse` 解析，保证报告的 root 与端点实际使用的一致。判定：`.git` 是目录 → `repository`；
+`.git` 是文件且 gitdir 含 `/modules/` → `submodule`；否则 → `worktree`。
+
+配置项（`src/index.ts`，均支持热改）：
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `scanDepth` | 2 | 向下扫描层数，工作目录为 0 |
+| `scanExclude` | `[]` | 追加黑名单正则（大小写不敏感，匹配目录自身名称） |
+| `scanDefaultExclude` | `true` | 是否启用内置黑名单 |
+| `scanMaxDirectories` | 5000 | 单次扫描的目录预算，超出则 `truncated` |
+
+新增 Remote 方法时必须同步三处：`src/shared.ts` 类型、`src/remote-descriptor.ts` 的
+`REMOTE_METHODS` 与 descriptor、`src/host/service.ts` 的 `async` 方法；另外
+`run/contract.mjs` 的 `EXPECTED_ARGS` 也要登记，否则该检查会 FAIL。
 
 ## 宿主侧要点
 

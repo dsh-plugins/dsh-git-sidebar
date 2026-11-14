@@ -7,6 +7,7 @@
  * escapes to the caller so its `problem` can be classified in one place.
  */
 
+import { normalize } from 'node:path'
 import type { ChangeEntry, GitIdentity, StatusSnapshot } from '../shared.ts'
 import type { HostContext, HostSession } from './context.ts'
 import { GitFailure, gitIn } from './git.ts'
@@ -86,7 +87,10 @@ export async function topLevel(git: Git): Promise<string> {
   }
   const root = parseTopLevel(top.stdout)
   if (root.length === 0) throw new GitFailure('rev-parse', 0, 'git rev-parse printed no directory')
-  return root
+  // Git prints the top level with forward slashes even on Windows, while every
+  // path the panel composes from the file system uses the platform separator.
+  // Normalizing here is what makes the two forms name the same checkout.
+  return normalize(root)
 }
 
 /** Read the configured committer identity; an unset or empty value stays null. */

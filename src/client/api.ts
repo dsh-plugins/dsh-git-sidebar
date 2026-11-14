@@ -13,7 +13,8 @@
 
 import type {
   BranchList, CommitDetailArgs, CommitOutcome, ConflictChoice, ConflictContent, DiffArgs, DiffPayload, HistoryPage, HunkArgs,
-  MessageDraft, SnapshotProblem, StashEntry, StatusSnapshot, SyncAction, WriteOutcome,
+  MessageDraft, RepositoriesArgs, RepositoryList, SelectOutcome, SelectRepositoryArgs, SnapshotProblem, StashEntry,
+  StatusSnapshot, SyncAction, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_NAMESPACE } from '../shared.ts'
 import { gitSidebarContribution, type RemoteContribution, type ZodLike } from '../remote-descriptor.ts'
@@ -168,6 +169,8 @@ export interface GitSidebarRemote {
     readonly sessionId: string
     readonly staged: boolean
   }): Promise<RemoteResult<MessageDraft>>
+  repositories(args: RepositoriesArgs): Promise<RemoteResult<RepositoryList>>
+  selectRepository(args: SelectRepositoryArgs): Promise<RemoteResult<SelectOutcome>>
 }
 
 /**
@@ -199,6 +202,8 @@ export interface GitSidebarApi {
   deleteBranch(sessionId: string, branch: string, force: boolean): Promise<WriteOutcome>
   mergeBranch(sessionId: string, branch: string): Promise<WriteOutcome>
   generateMessage(sessionId: string, staged: boolean): Promise<MessageDraft>
+  repositories(sessionId: string): Promise<RepositoryList>
+  selectRepository(sessionId: string, root?: string): Promise<SelectOutcome>
 }
 
 /** The namespace mount, started at apply time and awaited by the first body that draws. */
@@ -404,7 +409,35 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
       if (result.ok) return result.value
       return { ok: false, problem: 'failed', message: result.error.message }
     },
+    async repositories(sessionId: string): Promise<RepositoryList> {
+      try {
+        const result = await remote.repositories({ sessionId })
+        if (result.ok) return result.value
+        return { ...EMPTY_REPOSITORIES, error: result.error.message }
+      } catch (error) {
+        return { ...EMPTY_REPOSITORIES, error: messageOf(error) }
+      }
+    },
+    async selectRepository(sessionId: string, root?: string): Promise<SelectOutcome> {
+      try {
+        const result = await remote.selectRepository(root === undefined ? { sessionId } : { sessionId, root })
+        if (result.ok) return result.value
+        return { ok: false, problem: 'failed', message: result.error.message }
+      } catch (error) {
+        return { ok: false, problem: 'failed', message: messageOf(error) }
+      }
+    },
   }
+}
+
+/** What the repository picker shows when the scan could not run at all. */
+const EMPTY_REPOSITORIES: RepositoryList = {
+  scanRoot: '',
+  depth: 0,
+  selected: null,
+  entries: [],
+  truncated: false,
+  warnings: [],
 }
 
 /** What the branch picker shows when the listing could not be read at all. */

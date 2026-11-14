@@ -10,6 +10,8 @@ DeepSeek Harness 的 Git 面板插件（`@dsh-plugin/dsh-git-sidebar`，仓库�
 | --- | --- |
 | 「开始」页 `Git 面板` 按钮（位于「工作区文件」之下，无快捷键） | 已实现 |
 | 当前分支 / detached HEAD 短 SHA / 仓库路径 | 已实现 |
+| 子目录多仓库：顶部仓库下拉切换，识别 submodule / linked worktree | 已实现 |
+| 扫描深度可配（默认 2，工作目录为 0），正则黑名单含 `build` / `node_modules` / `.gradle` 等内置规则 | 已实现 |
 | 上游 `↑n ↓m`，分支同步时隐藏 | 已实现 |
 | 暂存更改 / 更改两组，逐文件状态字母 `A M D R U` | 已实现 |
 | 单文件暂存 / 取消暂存 / 放弃 / 查看差异 | 已实现 |
@@ -33,6 +35,8 @@ DeepSeek Harness 的 Git 面板插件（`@dsh-plugin/dsh-git-sidebar`，仓库�
 
 - 提交历史以**泳道图**呈现：分叉、合并、根提交都在图上连通，左侧每条泳道一色（8 色，明暗主题各自可辨）。refs 按类型上色（当前分支 / 本地分支 / 远程跟踪 / tag）。点一行打开该提交自己的 diff；滚动到底自动加载下一页；方向键上下移动焦点。
 - 顶部分支名可点击，展开分支选择器：列出本地分支、切换、新建、删除（未合并会二次确认）；`⋯` 菜单提供 fetch / pull / push、储藏当前改动、以及合并某个分支到当前分支。`pull` 只做快进，`push` 与 `pull` 都会先确认。
+- 分支名右侧是**仓库下拉**：点开会扫描会话工作目录的子目录（默认两层），列出其中的 checkout。`.git` 是文件的 checkout 会标成 `submodule` 或 `worktree`；选中后整个面板（更改、历史、分支、储藏、diff）都切到那个仓库。选过之后菜单底部出现「回到工作目录」。
+- 扫描默认跳过 `node_modules`、`build`、`dist`、`.gradle`、`.venv` 等目录；可用配置追加或关闭这些规则。
 - 改动按「暂存更改」「更改」分组；把鼠标移到文件行上会显示操作按钮，键盘聚焦或触屏上常驻显示。
 - 点文件行本身在右侧栏打开该文件的 diff，可与其他标签页并存；点历史里的提交打开该提交自己的 diff。
 - 提交框可用 `Ctrl+Enter`（macOS 上 `Cmd+Enter`）提交。暂存区为空时按钮变成「暂存全部并提交」；勾选「改写上次提交」可修改上一条提交信息（工作区干净时也能用）。
@@ -51,6 +55,20 @@ DeepSeek Harness 的 Git 面板插件（`@dsh-plugin/dsh-git-sidebar`，仓库�
 Remote 的方法表是手写的（`src/remote-descriptor.ts`），因为静态客户端包拿不到生成的 typert 产物。`run/contract.mjs` 校验该表、宿主服务方法与 wire 类型三者一致，防止改名漂移。
 
 配色参照 Monokai Pro 的语义分配，但落地在主题令牌上：当前分支/ref 用品牌色，新增用 success 令牌，删除与冲突用 error 令牌，次要文本用 label-secondary。
+
+### 配置
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `gitCommand` | `git` | git 可执行文件 |
+| `timeoutMs` / `syncTimeoutMs` / `graceMs` | 15000 / 60000 / 2000 | 单条命令的截止时间与退出宽限 |
+| `maxOutputBytes` / `maxDiffBytes` | 4 MiB / 1 MiB | 单条命令输出上限、diff 渲染上限 |
+| `draftProvider` / `draftModel` / `draftPrompt` | 空 / 空 / 内置 | 生成提交信息用的路由与提示词 |
+| `draftMaxInputBytes` / `draftMaxOutputTokens` / `draftTimeoutMs` | 24576 / 512 / 45000 | 生成提交信息的限制 |
+| `scanDepth` | `2` | 向下扫描几层找仓库，会话工作目录为深度 0 |
+| `scanExclude` | `[]` | 追加的黑名单正则，匹配目录当前层级的名称（大小写不敏感） |
+| `scanDefaultExclude` | `true` | 是否启用内置黑名单（`node_modules`、`build`、`.gradle` 等） |
+| `scanMaxDirectories` | `5000` | 单次扫描最多访问的目录数，超出时下拉里会标注结果不完整 |
 
 ## 安装
 
@@ -95,7 +113,9 @@ $env:DSH_PERMISSION_MODE = 'danger-full-access'
 & $env:DSH_NODE_EXECUTABLE (Join-Path $env:DSH_INSTALL_DIR 'lib\bin.js') --profile web --no-open --port 4400
 ```
 
-测试脚本：`test.mjs`（按钮位置）、`git-test.mjs`（P0 主流程）、`diff-test.mjs`（差异视图）、`p1-test.mjs`（分支/储藏）、`graph-model.test.mjs`（泳道布局纯函数，不需要浏览器）、`history-test.mjs`（历史泳道图）、`history-dark.mjs`（深色泳道配色）、`hunk-test.mjs`（hunk 级暂存）、`branch-test.mjs`（分支删除与合并）、`sync-test.mjs`（对本地裸仓库的 fetch/pull/push）、`conflict-test.mjs`（冲突逐区解决与中止）、`amend-test.mjs`（暂存全部并提交、改写上次提交）、`dark.mjs`（深色）、`contract.mjs`（契约漂移）、`locale-parity.mjs`（中英键一致）、`parity.mjs`（两个图标是否一致）、`pluginrow.mjs`（插件管理行图标）、`detail.mjs`（详情页插图）。截图输出到 `run/shots/`。
+测试脚本：`test.mjs`（按钮位置）、`git-test.mjs`（P0 主流程）、`diff-test.mjs`（差异视图）、`p1-test.mjs`（分支/储藏）、`graph-model.test.mjs`（泳道布局纯函数，不需要浏览器）、`repo-scan.test.mjs`（子目录扫描、深度、黑名单、submodule/worktree 判定，不需要浏览器）、`repo-test.mjs`（浏览器：仓库下拉扫描、切换、回到工作目录）、`history-test.mjs`（历史泳道图）、`history-dark.mjs`（深色泳道配色）、`hunk-test.mjs`（hunk 级暂存）、`branch-test.mjs`（分支删除与合并）、`sync-test.mjs`（对本地裸仓库的 fetch/pull/push）、`conflict-test.mjs`（冲突逐区解决与中止）、`amend-test.mjs`（暂存全部并提交、改写上次提交）、`dark.mjs`（深色）、`contract.mjs`（契约漂移）、`locale-parity.mjs`（中英键一致）、`parity.mjs`（两个图标是否一致）、`pluginrow.mjs`（插件管理行图标）、`detail.mjs`（详情页插图）。截图输出到 `run/shots/`。
+
+`repo-test.mjs` 会在 `run/` 下造 `demo-app`、`demo-lib` 与 linked worktree `demo-wt` 作为扫描对象；`run/` 已 gitignore，删掉即可重建。
 
 ## 插件元数据
 

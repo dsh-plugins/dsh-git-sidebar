@@ -16,7 +16,7 @@
 
 import type {
   BranchList, ChangeEntry, CommitEntry, ConflictChoice, ConflictContent, DraftProblem, GitIdentity, MessageDraft,
-  StashEntry, StatusSnapshot, SyncAction, WriteOutcome,
+  RepositoryList, SelectOutcome, StashEntry, StatusSnapshot, SyncAction, WriteOutcome,
 } from '../shared.ts'
 import { DIFF_TAB_KIND, diffAddress } from '../shared.ts'
 import type {
@@ -24,6 +24,7 @@ import type {
 } from './api.ts'
 import { messageOf, unavailableSnapshot } from './api.ts'
 import { makeBranchHeader, type BranchHeaderProps } from './branch-header.ts'
+import { makeRepoBar } from './repo-picker.ts'
 import { CommitBox } from './commit-box.ts'
 import {
   askBranchName, confirmAbort, confirmDeleteBranch, confirmDetach, confirmDiscard, confirmForceDelete,
@@ -75,6 +76,16 @@ const EMPTY_BRANCHES: BranchList = { current: null, local: [], remote: [] }
 
 /** What the history shows when the page could not be read at all. */
 const EMPTY_PAGE: { commits: readonly CommitEntry[]; hasMore: boolean } = { commits: [], hasMore: false }
+
+/** What the repository picker shows when the scan could not run at all. */
+const EMPTY_REPOS: RepositoryList = {
+  scanRoot: '',
+  depth: 0,
+  selected: null,
+  entries: [],
+  truncated: false,
+  warnings: [],
+}
 
 /**
  * Refusals the reader is told about where they are looking, not only in the
@@ -140,6 +151,8 @@ interface SessionCalls {
   stashDrop(index: number): Promise<WriteOutcome>
   sync(action: SyncAction): Promise<WriteOutcome>
   history(limit: number, skip: number): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean }>
+  repositories(): Promise<RepositoryList>
+  selectRepository(root?: string): Promise<SelectOutcome>
 }
 
 /**
@@ -152,6 +165,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
   const t = runtime.t
   const FileRow = makeFileRow(React)
   const BranchHeader = makeBranchHeader(React)
+  const RepoBar = makeRepoBar(React)
   const StashGroup = makeStashGroup(React)
   const History = makeHistory(React)
   const Progress = makeProgress(React)
@@ -281,6 +295,12 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       history: (limit, skip) => runtime.api.ready
         .then(api => api.history(sessionId, limit, skip))
         .catch(() => EMPTY_PAGE),
+      repositories: () => runtime.api.ready
+        .then(api => api.repositories(sessionId))
+        .catch(() => EMPTY_REPOS),
+      selectRepository: root => runtime.api.ready
+        .then(api => api.selectRepository(sessionId, root))
+        .catch(failedSelect),
     }
 
     /**
@@ -378,6 +398,39 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       // deleted, so both calls go to the Host.
       void Promise.all([load(true), loadStashes(true)])
         .finally(() => { setRefreshing(false) })
+    }
+
+    /**
+     * Read another checkout of the Session's directory tree.
+     *
+     * Everything the panel remembers belongs to the checkout it was read from, so
+     * a successful switch drops all of it: the snapshot, the stashes, the history
+     * page, and the patches. The Host answers with the new checkout's snapshot,
+     * which is what the list paints from, so the switch costs no second read.
+     * @param root - the checkout to read; undefined returns to the working directory.
+     */
+    const switchRepository = (root: string | undefined): void => {
+      setNotice('')
+      setBusy(true)
+      setRefreshing(true)
+      void calls.selectRepository(root).then((outcome) => {
+        setBusy(false)
+        setRefreshing(false)
+        if (!outcome.ok) {
+          setNotice(refusalText(t, outcome.problem, outcome.message, t('notice.switchFailed')))
+          return
+        }
+        invalidateSession(cache, sessionId)
+        rememberStatus(cache, sessionId, outcome.snapshot)
+        setSnapshot(outcome.snapshot)
+        setStashes([])
+        rememberStashes(cache, sessionId, [])
+        setConflict(null)
+        clearSelection()
+        runtime.clearDiffCache?.()
+        dropHistory()
+        void loadStashes(true)
+      })
     }
 
     /**
@@ -778,6 +831,15 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       abort: abortOperation,
       deleteBranch,
       mergeBranch: merge,
+      repo: React.createElement(RepoBar, {
+        root: snapshot?.root,
+        loading,
+        busy,
+        enabled: sessionId !== '',
+        t,
+        list: calls.repositories,
+        select: switchRepository,
+      }),
     })
 
     const stashProps = (): StashProps => ({
@@ -1177,6 +1239,11 @@ function refusalText(t: Translate, problem: string, message: string, fallback: s
   // the refresh rather than repeating Git's own diagnostic.
   if (problem === 'stale') return t('notice.stale')
   return message === '' ? fallback : message
+}
+
+/** A repository switch that never reached the Host, folded into the refusal shape. */
+function failedSelect(error: unknown): SelectOutcome {
+  return { ok: false, problem: 'failed', message: messageOf(error) }
 }
 
 /**

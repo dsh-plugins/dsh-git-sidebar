@@ -13,8 +13,8 @@ import {
   BranchList, BranchListArgs, CheckoutArgs, CommitArgs, CommitDetailArgs, CommitOutcome, ConflictArgs,
   ConflictChoice, ConflictContent, CreateBranchArgs, DeleteBranchArgs, DiffArgs, DiffPayload, DiscardArgs,
   GenerateMessageArgs, HistoryArgs, HistoryPage, HunkArgs, MergeBranchArgs, MessageDraft, PathsArgs,
-  ResolveConflictArgs, AbortArgs, StashApplyArgs,
-  StashArgs, StashDropArgs, StashEntry, StashListArgs, StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
+  RepositoriesArgs, RepositoryList, ResolveConflictArgs, AbortArgs, SelectOutcome, SelectRepositoryArgs,
+  StashApplyArgs, StashArgs, StashDropArgs, StashEntry, StashListArgs, StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_METHODS } from '../remote-descriptor.ts'
 import {
@@ -31,6 +31,10 @@ import type { GitConfig, GitRunner } from './git.ts'
 import { applyHunk, hunkPatch } from './hunk.ts'
 import { draftMessage, type DraftContext, type MessageConfig } from './message.ts'
 import { readBranches, readCommitDiff, readHistory, readOperation, readStashes, readUpstream } from './refs.ts'
+import {
+  describeRepository, mergeScanned, scanRepositories,
+  type ScanConfig, type ScannedRepository,
+} from './repos.ts'
 import { NoRepository, messageOf, readIdentity, readStatus, topLevel, unavailable } from './status.ts'
 import { commitStaged, hasStagedChanges, write } from './write.ts'
 import type { WriteKind } from './write.ts'
@@ -46,12 +50,17 @@ export interface ServiceConfig extends DiffConfig {
   readonly syncTimeoutMs: number
   /** Route, prompt, and limits for the commit-message draft. */
   readonly draft: MessageConfig
+  /** Depth, blacklist, and budget of the repository scan. */
+  readonly scan: ScanConfig
 }
 
-/** One resolved Session and its directory. */
+/** One resolved Session, its directory, and the checkout the endpoints read. */
 interface Target {
   readonly session: HostSession
+  /** The Session's working directory, which is depth 0 of the scan. */
   readonly directory: string
+  /** The checkout every endpoint reads: the picked one, or the working directory. */
+  readonly base: string
 }
 
 /**
@@ -62,6 +71,12 @@ interface Target {
 export class GitSidebarService extends TypertRemoteService {
   private readonly home: HostContext
   private readonly config: ServiceConfig
+  /**
+   * The checkout each Session reads, when the reader picked one below its
+   * working directory. Absent means the working directory's own checkout, which
+   * is what every endpoint read before the picker existed.
+   */
+  private readonly selected = new Map<string, string>()
 
   constructor(ctx: HostContext, config: ServiceConfig) {
     super(ctx as never, 'gitSidebar')
@@ -79,7 +94,77 @@ export class GitSidebarService extends TypertRemoteService {
     if (session === undefined) return unavailable('no-directory')
     const directory = this.directoryOf(session)
     if (directory === undefined) return unavailable('no-directory')
-    return await this.snapshot(session, directory)
+    return await this.snapshot(session, this.baseOf(session, directory))
+  }
+
+  /**
+   * Scan below the Session's working directory for checkouts.
+   *
+   * The picker asks for this when it opens, so a panel that never switches
+   * repository never pays for the walk.
+   * @param args - the Session whose directory to scan.
+   * @returns the checkouts found and which one the panel reads.
+   */
+  async repositories(args?: RepositoriesArgs): Promise<RepositoryList> {
+    const target = this.targetOf(args?.sessionId)
+    const depth = this.config.scan.maxDepth
+    if (target === undefined) return { scanRoot: '', depth, selected: null, entries: [], truncated: false, warnings: [] }
+    try {
+      const current = await this.currentRepository(target)
+      const scan = await scanRepositories(target.directory, this.config.scan)
+      return {
+        scanRoot: target.directory,
+        depth,
+        selected: this.selected.get(target.session.id) ?? null,
+        entries: mergeScanned(current, scan.entries),
+        truncated: scan.truncated,
+        warnings: scan.warnings,
+      }
+    } catch (error) {
+      return {
+        scanRoot: target.directory,
+        depth,
+        selected: this.selected.get(target.session.id) ?? null,
+        entries: [],
+        truncated: false,
+        warnings: [],
+        error: messageOf(error),
+      }
+    }
+  }
+
+  /**
+   * Read the panel from another checkout of the Session's directory tree.
+   *
+   * The choice is remembered per Session and applies to every endpoint, so the
+   * diff viewer follows it too: a patch address carries no repository, and a
+   * selection kept on the client would leave the two halves disagreeing.
+   * @param args - the Session and the checkout root; omit the root to go back.
+   * @returns the new snapshot, or the refusal.
+   */
+  async selectRepository(args?: SelectRepositoryArgs): Promise<SelectOutcome> {
+    const target = this.targetOf(args?.sessionId)
+    if (target === undefined) {
+      return { ok: false, problem: 'failed', message: 'the session has no working directory' }
+    }
+    const wanted = typeof args?.root === 'string' ? args.root.trim() : ''
+    if (wanted.length === 0) {
+      this.selected.delete(target.session.id)
+      return { ok: true, snapshot: await this.snapshot(target.session, target.directory) }
+    }
+    try {
+      const root = await topLevel(gitIn(this.home, this.config, target.session, wanted, this.signalOf()))
+      if (!samePath(root, wanted)) {
+        return { ok: false, problem: 'no-repository', message: `${wanted} is not the top level of a checkout` }
+      }
+      this.selected.set(target.session.id, root)
+      return { ok: true, snapshot: await this.snapshot(target.session, root) }
+    } catch (error) {
+      if (error instanceof NoRepository) {
+        return { ok: false, problem: 'no-repository', message: `${wanted} is not inside a Git checkout` }
+      }
+      return { ok: false, problem: 'failed', message: messageOf(error) }
+    }
   }
 
   /**
@@ -98,7 +183,7 @@ export class GitSidebarService extends TypertRemoteService {
       this.home,
       this.config,
       session,
-      directory,
+      this.baseOf(session, directory),
       { path: args.path, staged: args.staged === true },
       this.signalOf(),
     )
@@ -113,7 +198,7 @@ export class GitSidebarService extends TypertRemoteService {
     const target = this.targetOf(args?.sessionId)
     if (target === undefined) return { commits: [], hasMore: false }
     try {
-      return await readHistory(this.home, this.config, target.session, target.directory, {
+      return await readHistory(this.home, this.config, target.session, target.base, {
         sessionId: target.session.id,
         limit: typeof args?.limit === 'number' ? args.limit : 20,
         skip: typeof args?.skip === 'number' ? args.skip : 0,
@@ -133,7 +218,7 @@ export class GitSidebarService extends TypertRemoteService {
     if (target === undefined || typeof args?.sha !== 'string') {
       return { kind: 'error', message: 'commitDetail requires a session and a commit' }
     }
-    return await readCommitDiff(this.home, this.config, target.session, target.directory, {
+    return await readCommitDiff(this.home, this.config, target.session, target.base, {
       sessionId: target.session.id,
       sha: args.sha,
     }, this.signalOf())
@@ -148,7 +233,7 @@ export class GitSidebarService extends TypertRemoteService {
     const target = this.targetOf(args?.sessionId)
     if (target === undefined) return { current: null, local: [], remote: [] }
     try {
-      return await readBranches(this.home, this.config, target.session, target.directory, this.signalOf())
+      return await readBranches(this.home, this.config, target.session, target.base, this.signalOf())
     } catch {
       return { current: null, local: [], remote: [] }
     }
@@ -263,7 +348,7 @@ export class GitSidebarService extends TypertRemoteService {
     const target = this.targetOf(args?.sessionId)
     if (target === undefined) return []
     try {
-      return await readStashes(this.home, this.config, target.session, target.directory, this.signalOf())
+      return await readStashes(this.home, this.config, target.session, target.base, this.signalOf())
     } catch {
       return []
     }
@@ -351,7 +436,7 @@ export class GitSidebarService extends TypertRemoteService {
       return { kind: 'error', message: 'conflict requires a session and a path' }
     }
     try {
-      const root = await this.rootOf(target.session, target.directory)
+      const root = await this.rootOf(target.session, target.base)
       return await readConflict(root, args.path)
     } catch (error) {
       return { kind: 'error', message: messageOf(error) }
@@ -465,7 +550,7 @@ export class GitSidebarService extends TypertRemoteService {
     const amend = args?.amend === true
     const stageAll = args?.stageAll === true
     try {
-      const root = await this.rootOf(session, directory)
+      const root = await this.rootOf(session, this.baseOf(session, directory))
       const git = gitIn(this.home, this.config, session, root, this.signalOf())
       if (!amend) {
         const identity = await readIdentity(git)
@@ -554,7 +639,7 @@ export class GitSidebarService extends TypertRemoteService {
       return { ok: false, problem: 'failed', message: 'the session has no working directory' }
     }
     try {
-      const root = await this.rootOf(target.session, target.directory)
+      const root = await this.rootOf(target.session, target.base)
       const refusal = await action(gitIn(this.home, this.config, target.session, root, this.signalOf()),
         target.session, root)
       if (refusal !== null) return refusal
@@ -582,7 +667,7 @@ export class GitSidebarService extends TypertRemoteService {
       this.home as DraftContext,
       this.config.draft,
       target.session,
-      target.directory,
+      target.base,
       args?.staged === true,
       this.signalOf(),
     )
@@ -592,7 +677,30 @@ export class GitSidebarService extends TypertRemoteService {
     const session = this.sessionOf(sessionId)
     if (session === undefined) return undefined
     const directory = this.directoryOf(session)
-    return directory === undefined ? undefined : { session, directory }
+    return directory === undefined ? undefined : { session, directory, base: this.baseOf(session, directory) }
+  }
+
+  /** The checkout every endpoint reads for one Session. */
+  private baseOf(session: HostSession, directory: string): string {
+    return this.selected.get(session.id) ?? directory
+  }
+
+  /**
+   * Resolve the checkout containing the Session's working directory.
+   *
+   * The walk below the working directory cannot see a top level above it, so the
+   * default checkout is read from Git once per scan. A directory outside every
+   * checkout, or a missing Git, leaves the walk's own result as the whole list.
+   * @param target - the Session and its directory.
+   * @returns the default checkout, or undefined when the directory has none.
+   */
+  private async currentRepository(target: Target): Promise<ScannedRepository | undefined> {
+    try {
+      const root = await topLevel(gitIn(this.home, this.config, target.session, target.directory, this.signalOf()))
+      return await describeRepository(target.directory, root)
+    } catch {
+      return undefined
+    }
   }
 
   /** Read a snapshot, folding every failure into the unavailable shape. */
@@ -654,6 +762,24 @@ async function allPaths(git: GitRunner): Promise<string[]> {
 /** The refusal a hunk write returns when the diff it was asked about is no longer the current one. */
 function staleHunk(): WriteOutcome {
   return { ok: false, problem: 'stale', message: '差异已变化，请刷新后重试' }
+}
+
+/**
+ * Compare two paths as the platform does.
+ *
+ * Git prints the top level with the separators and casing the file system uses,
+ * so a root the browser sent with other separators or another case is the same
+ * checkout; Windows compares case-insensitively, POSIX does not.
+ * @param left - one path.
+ * @param right - the other.
+ * @returns whether the two name the same directory.
+ */
+function samePath(left: string, right: string): boolean {
+  const normalize = (path: string): string => {
+    const unified = path.split('\\').join('/').replace(/\/+$/, '')
+    return process.platform === 'win32' ? unified.toLowerCase() : unified
+  }
+  return normalize(left) === normalize(right)
 }
 
 Object.defineProperty(GitSidebarService.prototype, REMOTE_METHOD_DESCRIPTOR, {

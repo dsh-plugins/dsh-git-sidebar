@@ -67,6 +67,7 @@ export const REMOTE_METHODS = [
   'stageHunk', 'unstageHunk',
   'deleteBranch', 'mergeBranch',
   'generateMessage',
+  'repositories', 'selectRepository',
 ] as const
 
 /** One method of the mounted namespace. */
@@ -154,6 +155,8 @@ export function gitSidebarContribution(zod: ZodLike): RemoteContribution {
       descriptor('deleteBranch', () => ({ sessionId: zod.string(), branch: zod.string(), force: zod.boolean() })),
       descriptor('mergeBranch', () => ({ sessionId: zod.string(), branch: zod.string() })),
       descriptor('generateMessage', () => ({ sessionId: zod.string(), staged: zod.boolean() })),
+      descriptor('repositories', () => ({ sessionId: zod.string() })),
+      descriptor('selectRepository', () => ({ sessionId: zod.string(), root: zod.string().optional() })),
     ],
   }
 }

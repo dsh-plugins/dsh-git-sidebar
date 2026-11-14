@@ -37,6 +37,13 @@ export interface BranchHeaderProps {
   deleteBranch(branch: string): void
   /** Merge one local branch into the checked-out one. */
   mergeBranch(branch: string): void
+  /**
+   * The repository picker, drawn where the header used to print the root path.
+   *
+   * The panel builds it because the scan belongs to the panel's Session; the
+   * header only reserves the slot, so this module stays about branches.
+   */
+  repo?: unknown
 }
 
 /**
@@ -169,15 +176,7 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
           React.createElement('span', { className: `${PREFIX}-branch-name` }, label),
           Icon(React, 'chevron', { size: 14 })),
         upstreamSits(React, t, upstream),
-        root === undefined
-          ? null
-          : React.createElement('span', {
-            className: `${PREFIX}-sub`,
-            title: root,
-            // The column is narrow, so the reading shows the last segment while
-            // the tooltip keeps the whole path.
-            'data-full': root,
-          }, lastSegment(root)),
+        props.repo ?? null,
         React.createElement('button', {
           type: 'button',
           className: `${PREFIX}-tool`,
@@ -412,13 +411,6 @@ function operations(
     onClick: () => { merge(name) },
   }, Icon(React, 'merge'), React.createElement('span', null, name))),
   )
-}
-
-/** The last segment of a filesystem path, for the narrow repository label. */
-function lastSegment(path: string): string {
-  const trimmed = path.replace(/[\\/]+$/, '')
-  const cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-  return cut < 0 ? trimmed : trimmed.slice(cut + 1)
 }
 
 /** The share of a text input's keyboard event this module reads. */

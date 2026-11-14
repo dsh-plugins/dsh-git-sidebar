@@ -67,6 +67,64 @@ export interface StatusSnapshot {
   readonly message?: string
 }
 
+/** What a directory with a `.git` entry is, as the repository picker presents it. */
+export type RepositoryKind =
+  /** An ordinary checkout: `.git` is a directory. */
+  | 'repository'
+  /** A submodule: `.git` is a file whose gitdir lives under `.git/modules`. */
+  | 'submodule'
+  /** A linked worktree: `.git` is a file whose gitdir lives under `.git/worktrees`. */
+  | 'worktree'
+
+/** One checkout the scan found below the Session's working directory. */
+export interface RepositoryEntry {
+  /** Absolute path of the checkout's top level. */
+  readonly root: string
+  /** Path from the scan root, forward-slashed; `.` is the scan root itself. */
+  readonly relative: string
+  /** Last segment of {@link root}, for the narrow label. */
+  readonly name: string
+  readonly kind: RepositoryKind
+}
+
+/** What the repository picker offers, and which checkout the panel is reading. */
+export interface RepositoryList {
+  /** The Session's working directory, which is depth 0 of the scan. */
+  readonly scanRoot: string
+  /** The depth limit the scan ran under. */
+  readonly depth: number
+  /** The root chosen with {@link SelectRepositoryArgs}; null reads the working directory's own checkout. */
+  readonly selected: string | null
+  /** The checkouts found, the current one first and the rest by path. */
+  readonly entries: readonly RepositoryEntry[]
+  /** True when the traversal budget ran out before every directory was visited. */
+  readonly truncated: boolean
+  /** Reasons part of the scan could not run, such as an exclude rule that is not a regex. */
+  readonly warnings: readonly string[]
+  /** Why the scan failed as a whole; absent when it ran. */
+  readonly error?: string
+}
+
+/** Arguments of the repository scan. */
+export interface RepositoriesArgs {
+  readonly sessionId: string
+}
+
+/** Arguments of a repository switch. */
+export interface SelectRepositoryArgs {
+  readonly sessionId: string
+  /** Absolute checkout root; omitted or empty returns to the working directory's own checkout. */
+  readonly root?: string
+}
+
+/** Why a repository switch refused. */
+export type SelectProblem = 'no-repository' | 'failed'
+
+/** The result of a repository switch. */
+export type SelectOutcome =
+  | { readonly ok: true; readonly snapshot: StatusSnapshot }
+  | { readonly ok: false; readonly problem: SelectProblem; readonly message: string }
+
 /** One line inside a hunk. */
 export interface DiffLine {
   readonly kind: 'context' | 'added' | 'removed'

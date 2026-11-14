@@ -98,15 +98,107 @@ export const PANEL_STYLES = `
   color: var(--dsw-alias-state-warn-primary);
 }
 
-.gs-sub {
+.gs-repo-wrap {
   flex: none;
   max-width: 40%;
-  overflow: hidden;
+}
+
+/* The repository picker: the header's path reading, now a control. */
+.gs-repo {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 4px;
   color: var(--dsw-alias-label-tertiary);
+  font: inherit;
   font-size: 11px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+
+.gs-repo:hover:not(:disabled) {
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.gs-repo:disabled {
+  cursor: default;
+}
+
+.gs-repo-name {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.gs-repo-menu {
+  min-width: 240px;
+}
+
+.gs-repo-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.gs-repo-option {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  align-items: center;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 28px;
+  padding: 3px 8px 3px 4px;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+
+.gs-repo-option:hover:not(:disabled) {
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.gs-repo-option[data-current] {
+  color: var(--dsw-alias-brand-primary);
+  font-weight: 600;
+}
+
+.gs-repo-option:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.gs-repo-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-repo-badge {
+  flex: none;
+  margin-left: auto;
+  padding: 0 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 16px;
+  background: var(--dsw-alias-bg-layer-2);
+  border-radius: var(--dsw-radius-xs);
+}
+
 .gs-tool {
   display: inline-flex;
   flex: none;
@@ -800,6 +892,8 @@ export const PANEL_STYLES = `
 
 .gs-branch-btn:focus-visible,
 .gs-branch-option:focus-visible,
+.gs-repo:focus-visible,
+.gs-repo-option:focus-visible,
 .gs-menu-item:focus-visible,
 .gs-history-title:focus-visible,
 .gs-history-more:focus-visible,
