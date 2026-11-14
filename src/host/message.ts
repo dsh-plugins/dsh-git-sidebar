@@ -63,9 +63,14 @@ interface StreamCall {
   (options: Record<string, unknown>): AsyncIterable<StreamChunk>
 }
 
-/** One streamed chunk, reduced to the text it may carry. */
+/** The slice of the Host stream-chunk protocol this module reads. */
 interface StreamChunk {
-  readonly delta?: { readonly content?: readonly unknown[] }
+  readonly type?: string
+  readonly text?: string
+  readonly reason?: {
+    readonly kind?: string
+    readonly failure?: { readonly message?: string }
+  }
 }
 
 /** The LLM seam as the host context exposes it, when the bundle injected it. */
@@ -185,19 +190,28 @@ function promptOf(config: MessageConfig, summary: string, patch: string, cut: bo
 }
 
 /**
- * Join the text blocks one stream produced.
+ * Join the text one stream produced.
+ *
+ * The protocol is flat: visible text arrives as `text-delta` chunks, and one
+ * terminal `finish` closes the stream. A failed or aborted finish throws, so
+ * the reader is told the provider's own sentence instead of getting a draft
+ * that merely looks empty.
  * @param chunks - the streamed chunks.
  * @returns the answer with surrounding whitespace removed.
+ * @throws {Error} when the stream ends in a failure or an abort.
  */
 async function collect(chunks: AsyncIterable<StreamChunk>): Promise<string> {
   const parts: string[] = []
   for await (const chunk of chunks) {
-    const content = chunk.delta?.content
-    if (!Array.isArray(content)) continue
-    for (const block of content) {
-      const text = (block as { readonly type?: string; readonly text?: string }).text
-      if (typeof text === 'string') parts.push(text)
+    if (chunk.type === 'text-delta' && typeof chunk.text === 'string') {
+      parts.push(chunk.text)
+      continue
     }
+    if (chunk.type !== 'finish') continue
+    const kind = chunk.reason?.kind
+    if (kind !== 'error' && kind !== 'aborted') continue
+    const failure = chunk.reason?.failure?.message
+    throw new Error(typeof failure === 'string' && failure.length > 0 ? failure : 'the model call failed')
   }
   return parts.join('').trim()
 }
