@@ -133,7 +133,13 @@ export interface GitSidebarRemote {
     readonly paths: readonly string[]
     readonly includeUntracked: boolean
   }): Promise<RemoteResult<WriteOutcome>>
-  commit(args: { readonly sessionId: string; readonly message: string }): Promise<RemoteResult<CommitOutcome>>
+  commit(args: {
+    readonly sessionId: string
+    readonly message: string
+    readonly amend?: boolean
+    readonly stageAll?: boolean
+    readonly paths?: readonly string[]
+  }): Promise<RemoteResult<CommitOutcome>>
   history(args: {
     readonly sessionId: string
     readonly limit: number
@@ -194,7 +200,11 @@ export interface GitSidebarApi {
   stage(sessionId: string, paths: readonly string[]): Promise<WriteOutcome>
   unstage(sessionId: string, paths: readonly string[]): Promise<WriteOutcome>
   discard(sessionId: string, paths: readonly string[], includeUntracked: boolean): Promise<WriteOutcome>
-  commit(sessionId: string, message: string, options?: { amend?: boolean; stageAll?: boolean }): Promise<CommitOutcome>
+  commit(
+    sessionId: string,
+    message: string,
+    options?: { amend?: boolean; stageAll?: boolean; paths?: readonly string[] },
+  ): Promise<CommitOutcome>
   requestDiff(args: DiffArgs, signal?: AbortSignal): Promise<DiffPayload>
   history(sessionId: string, limit: number, skip: number): Promise<HistoryPage>
   requestCommit(args: CommitDetailArgs, signal?: AbortSignal): Promise<DiffPayload>
@@ -315,7 +325,7 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
     async commit(
       sessionId: string,
       message: string,
-      options?: { amend?: boolean; stageAll?: boolean },
+      options?: { amend?: boolean; stageAll?: boolean; paths?: readonly string[] },
     ): Promise<CommitOutcome> {
       try {
         const result = await remote.commit({ sessionId, message, ...options })

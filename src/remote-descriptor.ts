@@ -22,7 +22,7 @@ export interface ZodLike {
   string(): { optional(): unknown }
   boolean(): { optional(): unknown }
   number(): unknown
-  array(item: unknown): unknown
+  array(item: unknown): { optional(): unknown }
 }
 
 /** Wire codec metadata carried on every Remote value. */
@@ -113,7 +113,7 @@ export function gitSidebarContribution(zod: ZodLike): RemoteContribution {
     result: resultCodec(method),
   })
 
-  const strings = (): unknown => zod.array(zod.string())
+  const strings = (): { optional(): unknown } => zod.array(zod.string())
 
   return {
     package: PACKAGE_NAME,
@@ -128,6 +128,7 @@ export function gitSidebarContribution(zod: ZodLike): RemoteContribution {
         message: zod.string(),
         amend: zod.boolean().optional(),
         stageAll: zod.boolean().optional(),
+        paths: strings().optional(),
       })),
       descriptor('history', () => ({ sessionId: zod.string(), limit: zod.number(), skip: zod.number() })),
       descriptor('commitDetail', () => ({ sessionId: zod.string(), sha: zod.string() })),

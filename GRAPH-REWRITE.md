@@ -1,13 +1,114 @@
 # Git 历史可视化重写：实现规格
 
-## 零、后续重写：紧凑排布 + 长直线折叠（当前实现）
+## 零、本轮：完整 port VS Code 布局（当前实现）
+
+上一轮的「紧凑排布 + 长直线折叠」被整体推翻，改成照抄 VS Code
+`src/vs/workbench/contrib/scm/browser/scmHistory.ts` 的 `toISCMHistoryItemViewModelArray()`
+（布局）与 `renderSCMHistoryItemGraph()`（几何）。输入仍然只有 `parents`
+（`git log --topo-order --format=%H %P`），布局仍然是纯函数 `layoutGraph()`。
+
+### 泳道分配（逐字照抄，不要自创）
+
+状态是一个 `swimlanes` 数组，**下标就是列号**，元素是「这条泳道正在等的 SHA」+ 色号。
+每行的 input 就是上一行的 output，规则只有五条：
+
+1. `circleIndex = input.findIndex(lane => lane.id === sha)`；找不到时 `circleIndex = input.length`
+   （新头部提交追加到最右，节点就画在那一列）。
+2. 遍历 input 构建 output：遇到 `id === sha` 的泳道，只在 `circleIndex` 那一处 push
+   `{ id: parents[0], color: 该泳道色 }`；**其余同 id 的泳道直接丢弃**。这一步是整张图
+   唯一的「列收缩」，也是右侧整体左移的唯一来源。
+3. 其它泳道按原顺序原样 push（深拷贝），中间不留空位。
+4. `parents[1..]` **无条件 push 到 output 末尾**：不查重、不复用已有泳道、不找空位。
+5. `parents.length === 0`（根提交）→ output 为空数组，此刻还在等待的泳道全部在这一行的节点上收束。
+
+列数 = 扫描过程中 output 数组的最大长度（本轮还额外把根节点可能落在 `input.length`
+的那一列算进去）。
+
+### 为什么不能复用空出来的列（水波纹）
+
+上一轮为了「干净」做了三件事：新头取最左空位（`lanes.indexOf(null)`）、merge 额外父取
+「离节点最近的空位」（`nearestFree`）、尾部空列裁剪。它们的共同后果是**同一列在不同行里
+指向不同的分支**：一条分支结束后留下的空位会被下一条新线立刻占用，于是同一条分支的线在
+历史中间左移右移，节点列号逐行跳动，整张图像水波纹。本轮一条都不做：
+
+- 表里没有 `null`，output 只由 push 构成，所以不存在「洞」，也没有可复用的空位；
+- 一条泳道从生到死都待在同一个下标，新分支一律开在最右；
+- 线只可能向左移动，且**只发生在「丢弃重复泳道」的那一行**（右侧整体左移一格），
+  这是 VS Code 允许的唯一横移。
+
+测试里把这三条写成了不变量：「每行首尾列号是 0..n-1 的稠密区间」「横移只出现在丢弃重复
+泳道的行且只会向左」「父提交出现在下一行时不会跑到子提交右侧」。
+
+### 颜色
+
+8 色 `LANE_COLORS` 仍在 `history.ts`，但**颜色跟着泳道走**：泳道创建时记下色号（创建时
+的列号），之后左移不变色，所以一条分支从头到尾同一个墨色。色号超出调色板长度时取模回绕。
+
+### 几何（`history.ts`）
+
+- `LANE_W = 14`、`ROW_H = 26`、圆角半径 `R = 5`、节点 `r = 4`、merge 节点 `r = 6`；
+  `x(lane) = LANE_W * (lane + 1)`，左侧留一列 padding；整张图统一宽度 `LANE_W * (lanes + 1)`。
+- 四种原语：
+  - 同列直通：`M x 0 V H`；
+  - 换列（`bend`）：`M xi 0 V (H/2-R)` → 1/4 弧 → `H (xo±R)` → 1/4 弧 → `V H`，横移发生在
+    节点高度，不是斜线；
+  - 汇入节点（`join`）：从顶边下来、在节点高度拐进节点中心；
+  - 离开节点（`branch`）：从节点中心横出、拐弯后垂直下到底边（merge 额外父就是这一种）。
+- **绘制顺序**：所有过路线 → merge 弧 → 节点上半段 → 节点下半段 → 圆点最后画；圆点带 2px
+  行背景色描边，把穿过它的线遮断。
+- 已删除：`foldLongStretches`、`GraphArrow`、`FOLD_AFTER`、`nearestFree`、`reserveLane` 的
+  空位复用、`collapsed` 字段，以及渲染层的 `arrowShapes` / `jumpTargetOf` / `scrollTo` /
+  `ARROW_H` / `ARROW_W` / `data-git-graph-jump`。
+  `styles.ts` 里的 `.gs-graph-arrow` / `.gs-graph-jump` 规则本轮不动（不归本文件所有）。
+
+### 数据形状
+
+```ts
+export interface GraphRowStroke {
+  readonly prior?: number   // 从顶边进入的列；缺省表示从本行节点出发
+  readonly next?: number    // 从底边离开的列；缺省表示在本行节点收束
+  readonly kind: 'through' | 'bend' | 'join' | 'branch'
+  readonly color: number    // 调色板槽位，整条线不变
+}
+
+export interface GraphRow {
+  readonly sha: string
+  readonly lane: number     // 节点列
+  readonly color: number    // 节点色号（= 第一父线色号）
+  readonly merged: boolean  // 多于一个父提交，画大一点的节点
+  readonly strokes: readonly GraphRowStroke[]
+}
+
+export interface GraphLayout {
+  readonly rows: readonly GraphRow[]
+  readonly lanes: number
+}
+```
+
+`strokes` 的边界约定让渲染层不需要知道邻居：每行只在 `prior` / `next` 标注的列上接触上下边，
+上一行 `next` 的集合与下一行 `prior` 的集合逐项相等（测试断言）。
+
+### 本轮验证（`run/work/anvil-500.txt`，真实仓库 500 个提交）
+
+| 指标 | 上一轮 | 本轮 |
+| --- | --- | --- |
+| 行数 | 500 | 500 |
+| 列数（lanes） | 14 | 15 |
+| 行内空洞（列存在但无线） | 340 | 0 |
+| 折叠行 / 箭头 | 3116 / 258 | 0 / 0 |
+| 横移段数（换列） | 不适用（无身份） | 145，全部发生在丢弃重复泳道的那一行 |
+| 无法解释的横移 | — | 0 |
+
+---
+
+## 上一轮：紧凑排布 + 长直线折叠（本轮已推翻）
 
 数据仍只有 `parents`（`git log --topo-order --format=%H %P`），布局仍是纯函数 `layoutGraph()`（`src/client/graph-model.ts`）。
 
 ### 泳道分配
 
 - 一张 `lanes: (sha|null)[]` 表，下标就是列号；每行把「等待本提交的那条泳道」交给它的第一个父提交，其余泳道原样保留。
-- **新线取最左空位**（不是追加到最右）：一条分支结束后留下的空列会被下一条新线立刻占用。VS Code 是追加到最右并保留重复泳道，这是它越画越宽的主因。
+- **新线取最左空位**（不是追加到最右）：一条分支结束后留下的空列会被下一条新线立刻占用。VS Code 是追加到最右并保留重复泳道（本轮实测在 500 提交样本上只有 15 列，见「零」节的表）。
 - **merge 的额外父优先复用已有泳道**；确实需要新列时取**离节点最近的空位**，于是折角只经过空格，不会横跨其它线（旧实现会从节点一路横跨到最右列，就是贯穿屏幕的那条横线）。
 - 尾部空列每行裁剪。
 
@@ -23,7 +124,7 @@
 
 ### 参考实现（本轮核实过的源码）
 
-- VS Code：`src/vs/workbench/contrib/scm/browser/scmHistory.ts` 的 `toISCMHistoryItemViewModelArray()` / `renderSCMHistoryItemGraph()`——泳道数组、第一父原地替换、汇合丢重复列左移；merge 额外父无脑追加到最右（宽度爆炸来源）；**无折叠**；长横线靠节点背景色描边遮罩（`.graph > circle { stroke: var(--vscode-sideBar-background) }`）。
+- VS Code：`src/vs/workbench/contrib/scm/browser/scmHistory.ts` 的 `toISCMHistoryItemViewModelArray()` / `renderSCMHistoryItemGraph()`——泳道数组、第一父原地替换、汇合丢重复列左移；merge 额外父无脑追加到最右（当时以为这是宽度爆炸来源，本轮在 500 提交的真实样本上实测只有 15 列：额外父通常几行内就被它自己的行消费掉）；**无折叠**；长横线靠节点背景色描边遮罩（`.graph > circle { stroke: var(--vscode-sideBar-background) }`）。
 - IntelliJ：`GraphLayoutBuilder.kt`（按分支重要性给稳定 `layoutIndex`，行内 x 是排序位次）、`SimpleGraphCellPainter.kt`（只在相邻两行之间斜一次，画直线段而非贝塞尔）、`PrintElementGeneratorImpl.kt`（长边折叠常量与判据）。
 
 ---

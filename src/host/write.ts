@@ -88,16 +88,65 @@ export async function hasStagedChanges(git: Git): Promise<boolean> {
  * @returns the abbreviated object name of the new commit, or null when HEAD stayed unreadable.
  */
 export async function commitStaged(git: Git, message: string, amend = false): Promise<string | null> {
+  return await withMessageFile(message, async (file) => {
+    await git('commit', amend ? ['commit', '--amend', '-F', file] : ['commit', '-F', file])
+    return await shortHead(git)
+  })
+}
+
+/**
+ * Commit the given paths only, staging them first so an untracked file is in the index.
+ *
+ * `--only` makes the named paths the whole content of the new commit: work that
+ * is already staged but was not picked stays in the index instead of riding
+ * along. `--amend` keeps that same narrowing for a rewrite.
+ * @param git - runner bound to the repository root.
+ * @param message - the commit message, already trimmed and non-empty.
+ * @param paths - repository-relative paths, already validated by the caller.
+ * @param amend - rewrite the previous commit instead of adding one.
+ * @returns the abbreviated object name of the new commit, or null when HEAD stayed unreadable.
+ */
+export async function commitPaths(
+  git: Git,
+  message: string,
+  paths: readonly string[],
+  amend = false,
+): Promise<string | null> {
+  await git('add', ['add', '--', ...paths])
+  return await withMessageFile(message, async (file) => {
+    const amendFlag = amend ? ['--amend'] : []
+    await git('commit', ['commit', '--only', '-F', file, ...amendFlag, '--', ...paths])
+    return await shortHead(git)
+  })
+}
+
+/**
+ * Run one Git call with the message in a temporary file, then remove the file.
+ *
+ * A message holds paragraphs, and Git would read those as breaks in an argument.
+ * @param message - the text to hand Git.
+ * @param run - the call that reads the file.
+ * @returns whatever the call returned.
+ */
+async function withMessageFile<T>(message: string, run: (file: string) => Promise<T>): Promise<T> {
   const file = join(
     tmpdir(),
     `dsh-git-sidebar-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`,
   )
   await writeFile(file, message, 'utf8')
   try {
-    await git('commit', amend ? ['commit', '--amend', '-F', file] : ['commit', '-F', file])
+    return await run(file)
   } finally {
     await rm(file, { force: true })
   }
+}
+
+/**
+ * Read the abbreviated object name HEAD now names.
+ * @param git - runner bound to the repository root.
+ * @returns the abbreviation, or null when HEAD is unreadable.
+ */
+async function shortHead(git: Git): Promise<string | null> {
   const head = await git('rev-parse', ['rev-parse', '--short', 'HEAD'], [0, 128])
   const [commit] = head.stdout.split(/\r?\n/)
   return head.exitCode === 0 && commit !== undefined && commit.length > 0 ? commit : null

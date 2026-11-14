@@ -1841,4 +1841,136 @@ export const PANEL_STYLES = `
   flex: none;
   justify-content: flex-end;
 }
+
+/* The commit box at the start of a change row: it names what the next commit holds. */
+.gs-pick {
+  flex: none;
+  margin: 0 0 0 6px;
+  accent-color: var(--dsw-alias-button-primary-fill);
+  cursor: pointer;
+}
+
+/*
+ * The three regions of the body: the change list, the commit box, and the
+ * history. Each takes exactly the height the reader set for it, so what one
+ * holds never decides how much room the others get. The column scrolls when the
+ * three heights do not fit, which is the one thing that keeps a short window
+ * from hiding a region outright.
+ */
+.gs-panes {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.gs-pane {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.gs-pane[data-collapsed] {
+  flex: 0 0 auto;
+}
+
+/*
+ * The grab strip on the region's top edge. It is 6px of padding over the whole
+ * width rather than a visible bar, so the panel reads as three blocks of
+ * content until the pointer finds it.
+ */
+.gs-pane-resize {
+  flex: none;
+  height: 6px;
+  margin-bottom: -3px;
+  cursor: row-resize;
+  background: transparent;
+}
+
+.gs-pane-resize:hover,
+.gs-pane-resize:focus-visible {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent);
+  outline: none;
+}
+
+.gs-pane-head {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 8px 2px 4px;
+}
+
+.gs-pane-toggle {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 4px;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+
+.gs-pane-toggle:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.gs-pane-toggle:focus-visible {
+  outline: 1px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.gs-pane-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.gs-pane-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gs-pane[data-collapsed] .gs-pane-body {
+  display: none;
+}
+
+/* The commit box is a stack of controls rather than a list, so its region
+   scrolls as a whole when the reader gives it less room than they need. */
+.gs-pane[data-git-pane='commit'] .gs-pane-body {
+  display: block;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/*
+ * The history's own title button folds the same state as the region's head, so
+ * two switches for one list would sit on top of each other. The region's head
+ * carries the title and the fold; the history keeps the count and the refresh.
+ */
+.gs-pane[data-git-pane='history'] .gs-history-title {
+  display: none;
+}
+
+/*
+ * A drag must not select the labels it passes over: the pointer is moving the
+ * divider, and the browser's default would paint a selection instead.
+ */
+body.gs-dragging {
+  cursor: row-resize;
+  user-select: none;
+}
 `

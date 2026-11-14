@@ -6,10 +6,13 @@
  * as the "load more" control, so a reader who never scrolls can still ask, and a
  * reader on a touch screen gets the same gesture as a wheel.
  *
- * Every row draws its own slice of the graph: the strokes `layoutGraph` assigned
- * to it plus the node the commit sits on. Slices stack, so the lines a row ends
- * at its bottom edge are the lines the next row starts at its top edge, and the
- * column reads as one drawing although no row knows its neighbours.
+ * Every row draws its own slice of the graph: the lines `layoutGraph` assigned to
+ * it plus the node the commit sits on. Slices stack, so the lines a row ends at
+ * its bottom edge are the lines the next row starts at its top edge, and the
+ * column reads as one drawing although no row knows its neighbours. The geometry
+ * is VS Code's: a column is 14px, a quarter turn is 5px, a merge's extra parent
+ * leaves the node sideways and turns down into its own column, and the node is
+ * painted last with a ring in the row's ground colour so no line crosses it.
  *
  * A row opens the commit's own patch as a diff tab. That address carries
  * `commit/<sha>` rather than a path, which is the one shape the diff viewer
@@ -19,7 +22,7 @@
 import type { CommitEntry, CommitRef } from '../shared.ts'
 import { DIFF_TAB_KIND, commitDiffAddress } from '../shared.ts'
 import type { ReactLike, TabInfo, Translate } from './api.ts'
-import type { GraphArrow, GraphLaneSegment, GraphRow } from './graph-model.ts'
+import type { GraphRow, GraphRowStroke } from './graph-model.ts'
 import { layoutGraph } from './graph-model.ts'
 import { Icon } from './icons.ts'
 import { makeProgress } from './progress.ts'
@@ -37,12 +40,15 @@ const LANE_W = 14
 /** Height of one row, which is also the tall edge of one graph slice. */
 const ROW_H = 26
 
-/** Radius of the dot a commit is drawn as. */
+/** Radius of the node a commit is drawn as, and of a merge's wider node. */
 const NODE_R = 4
+const MERGE_NODE_R = 6
 
-/** Height and width of one fold arrow's mark, in pixels. */
-const ARROW_H = 6
-const ARROW_W = 8
+/** Radius of the quarter turns that join a line's vertical runs. */
+const TURN_R = 5
+
+/** Ring around a node, in the colour of the ground it sits on, so lines break there. */
+const NODE_RING = 'var(--dsw-alias-bg-layer-1)'
 
 /** The selector a row control is found by, for the arrow keys. */
 const ROW_SELECTOR = '[data-git-history-row]'
@@ -301,7 +307,7 @@ function historyBody(React: ReactLike, props: HistoryProps, view: BodyView): unk
       'data-lanes': String(view.lanes),
     },
     React.createElement('ul', { className: `${PREFIX}-commits`, onKeyDown: view.onKeyDown },
-      ...view.commits.map((commit, index) => commitRow(React, t, tab, commit, view, index)))),
+      ...view.commits.map(commit => commitRow(React, t, tab, commit, view)))),
     view.hasMore
       ? React.createElement('button', {
         type: 'button',
@@ -322,34 +328,21 @@ function commitRow(
   tab: TabInfo['tab'] | undefined,
   commit: CommitEntry,
   view: BodyView,
-  index: number,
 ): unknown {
   const open = (): void => {
     if (tab === undefined) return
     tab.actions.openResource(commitDiffAddress(commit.sha), { kind: DIFF_TAB_KIND })
   }
-  const row = view.rows.get(commit.sha) ?? { sha: commit.sha, lane: 0, segments: [] }
-  const previous = view.rows.get(view.commits[index - 1]?.sha ?? '')
+  const row = view.rows.get(commit.sha) ?? { sha: commit.sha, lane: 0, color: 0, merged: false, strokes: [] }
   return React.createElement('li', { key: commit.sha, className: `${PREFIX}-commit-row` },
     React.createElement('button', {
       type: 'button',
       className: `${PREFIX}-commit-open`,
       'data-git-history-row': commit.sha,
       title: `${commit.short} ${commit.subject}`,
-      onClick: (event: RowClickEvent) => {
-        // The fold arrows live inside the row's own control, so a click on one has
-        // to be recognised before the row turns it into "open this diff".
-        const target = jumpTargetOf(event)
-        if (target !== undefined) {
-          event.stopPropagation()
-          if (target.kind === 'jump') scrollTo(target.sha)
-          else view.more()
-          return
-        }
-        open()
-      },
+      onClick: open,
     },
-    graphSlice(React, row, view.lanes, continuesFromAbove(previous, row.lane)),
+    graphSlice(React, row, view.lanes),
     React.createElement('span', { className: `${PREFIX}-sha`, title: commit.sha }, commit.short),
     React.createElement('span', { className: `${PREFIX}-subject` }, commit.subject),
     commit.refs.length === 0
@@ -391,49 +384,6 @@ function commitRow(
 interface MenuEvent {
   readonly currentTarget: MenuAnchor
   stopPropagation(): void
-}
-
-/** The share of a click inside a row this module reads. */
-interface RowClickEvent {
-  readonly target?: unknown
-  stopPropagation(): void
-}
-
-/**
- * What a click on a fold arrow asks for.
- *
- * Two things can be behind an arrow: a commit already on screen, and a commit the
- * loaded page does not hold yet. The first is a scroll, the second is the next
- * page — the same distinction the arrow's own direction carries.
- * @param event - the click, as the row's own handler receives it.
- * @returns the commit to scroll to, `more` for the next page, or undefined when
- * the click was not on an arrow.
- */
-function jumpTargetOf(event: RowClickEvent): { readonly kind: 'jump'; readonly sha: string } | { readonly kind: 'more' } | undefined {
-  const target = event.target as
-    | { closest?: (selector: string) => { getAttribute(name: string): string | null } | null }
-    | null
-    | undefined
-  const hit = target?.closest?.('[data-git-graph-jump]')
-  if (hit === null || hit === undefined) return undefined
-  const sha = hit.getAttribute('data-git-graph-jump')
-  if (typeof sha !== 'string') return undefined
-  return sha.length === 0 ? { kind: 'more' } : { kind: 'jump', sha }
-}
-
-/**
- * Bring one commit's row to the middle of the list.
- *
- * The list loads a page at a time, so the commit a fold points at is normally
- * already rendered a few rows away; scrolling rather than re-reading keeps the
- * jump instant and leaves the reader's place in the history intact.
- * @param sha - the commit to show.
- */
-function scrollTo(sha: string): void {
-  if (typeof document === 'undefined') return
-  const row = document.querySelector(`[data-git-graph-row="${sha}"]`)
-  if (row === null || typeof row.scrollIntoView !== 'function') return
-  row.scrollIntoView({ block: 'center', behavior: 'smooth' })
 }
 
 /**
@@ -519,49 +469,77 @@ function normalizeRef(decoration: CommitRef | string): CommitRef {
   return { name: decoration, kind: decoration.includes('/') ? 'remote' : 'local' }
 }
 
+/** The drawing passes, in the order the shapes of one row are added. */
+const DRAW_ORDER = ['passing', 'arc', 'upper', 'lower'] as const
+
+/** One pass of the drawing, named by what it puts down. */
+type DrawPhase = typeof DRAW_ORDER[number]
+
+/**
+ * Which pass draws one line.
+ *
+ * A line that enters at the top edge and leaves at the bottom one belongs to the
+ * first pass. A merge's arc leaves the node, so it goes over those; the node's own
+ * two halves go over both, which is what makes the join with its first parent
+ * look like one line through the dot rather than three.
+ * @param stroke - one line of the row.
+ * @param rowLane - the column the row's node sits in.
+ * @returns the pass that draws it.
+ */
+function phaseOf(stroke: GraphRowStroke, rowLane: number): DrawPhase {
+  if (stroke.kind === 'through' || stroke.kind === 'bend') return 'passing'
+  if (stroke.kind === 'join') return stroke.prior === rowLane ? 'upper' : 'passing'
+  return stroke.next === rowLane ? 'lower' : 'arc'
+}
+
 /**
  * One row's slice of the graph.
  *
  * The slice is as wide as the whole graph, so every gutter lines up, and every
- * stroke it draws fits inside `ROW_H`, which is what lets the rows stack without
- * a seam.
+ * line it draws stays inside `ROW_H`, which is what lets the rows stack without a
+ * seam: a row leaves a line at its bottom edge exactly where the next row picks
+ * it up at the top edge.
+ *
+ * The order the shapes are added in is the whole drawing: the lines that cross
+ * the row first, then a merge's arcs over them, then the node's own two halves,
+ * and the node last, so its ring cuts whatever ran behind it.
  * @param React - the loader's React.
  * @param row - the row the layout produced.
- * @param lanes - the graph's total width in lanes.
- * @param above - whether a line already reaches this row's own lane from above.
+ * @param lanes - the graph's total width in columns.
  * @returns the SVG element.
  */
-function graphSlice(React: ReactLike, row: GraphRow, lanes: number, above: boolean): unknown {
-  const width = lanes * LANE_W
+function graphSlice(React: ReactLike, row: GraphRow, lanes: number): unknown {
+  const width = laneX(lanes)
+  const nodeX = laneX(row.lane)
   const shapes: unknown[] = []
-  row.segments.forEach((segment, index) => {
-    const path = segmentPath(segment, row.lane, above)
-    if (path === undefined) return
-    shapes.push(React.createElement('path', {
-      // A malformed history can name one parent twice, which would give two
-      // strokes of one row the same lane; the position keeps the keys unique.
-      key: `${index}:${segment.kind}:${segment.lane}`,
-      className: `${PREFIX}-graph-line`,
-      'data-git-graph-line': '',
-      'data-git-graph-kind': segment.kind,
-      d: path,
-      style: { stroke: laneColor(segment.lane) },
-    }))
-  })
-  for (const [index, arrow] of (row.arrows ?? []).entries()) {
-    shapes.push(...arrowShapes(React, arrow, index))
+
+  for (const phase of DRAW_ORDER) {
+    row.strokes.forEach((stroke, index) => {
+      if (phaseOf(stroke, row.lane) !== phase) return
+      shapes.push(React.createElement('path', {
+        key: `${index}:${stroke.kind}`,
+        className: `${PREFIX}-graph-line`,
+        'data-git-graph-line': '',
+        'data-git-graph-kind': stroke.kind,
+        d: strokePath(stroke, nodeX),
+        style: { stroke: slotColor(stroke.color) },
+      }))
+    })
   }
+
   shapes.push(React.createElement('circle', {
     key: 'node',
     className: `${PREFIX}-graph-node`,
     'data-git-graph-node': '',
-    cx: laneCenter(row.lane),
+    'data-git-graph-merged': row.merged ? '' : undefined,
+    cx: nodeX,
     cy: ROW_H / 2,
-    r: NODE_R,
-    // The node is filled with the row's ink and ringed with the row's own ground,
-    // so a stroke passing behind it reads as interrupted rather than crossed.
-    style: { fill: laneColor(row.lane) },
+    r: row.merged ? MERGE_NODE_R : NODE_R,
+    // The node takes its column's ink and is ringed with the row's own ground, so
+    // a line running behind it reads as interrupted rather than crossed.
+    style: { fill: slotColor(row.color), stroke: NODE_RING, strokeWidth: 2 },
   }))
+
   return React.createElement('svg', {
     className: `${PREFIX}-graph-row`,
     'data-git-graph-row': row.sha,
@@ -575,111 +553,88 @@ function graphSlice(React: ReactLike, row: GraphRow, lanes: number, above: boole
 }
 
 /**
- * The two shapes one fold arrow draws: the mark, and the area that takes the click.
+ * The path of one line.
  *
- * The click lands on the transparent rectangle rather than on the triangle, so the
- * target is comfortable at 14px wide without making the mark itself look heavy.
- * @param React - the loader's React.
- * @param arrow - the end of the folded stretch, and the commit it points at.
- * @param index - position among this row's arrows, for the render key.
- * @returns the mark and its hit area.
+ * A line that reaches an edge runs from that edge to the other; one that starts or
+ * ends at the node runs only half the row, because the node itself covers the
+ * rest. A sideways move happens at the node's height, as a step with rounded
+ * corners rather than a diagonal, which is what keeps two lines side by side
+ * readable while they cross.
+ * @param stroke - one line of the row.
+ * @param nodeX - the x of this row's node, which is where an open end attaches.
+ * @returns the `d` attribute.
  */
-function arrowShapes(React: ReactLike, arrow: GraphArrow, index: number): unknown[] {
-  const x = laneCenter(arrow.lane)
-  const down = arrow.direction === 'down'
-  const tip = down ? ROW_H - 2 : 2
-  const base = down ? tip - ARROW_H : tip + ARROW_H
-  const half = ARROW_W / 2
-  return [
-    React.createElement('path', {
-      key: `arrow:${index}:${arrow.lane}`,
-      className: `${PREFIX}-graph-arrow`,
-      'data-git-graph-arrow': arrow.direction,
-      d: `M${x - half} ${base}L${x} ${tip}L${x + half} ${base}Z`,
-      style: { fill: laneColor(arrow.lane) },
-    }),
-    React.createElement('rect', {
-      key: `jump:${index}:${arrow.lane}`,
-      className: `${PREFIX}-graph-jump`,
-      'data-git-graph-jump': arrow.to,
-      'data-git-graph-jump-direction': arrow.direction,
-      x: x - LANE_W / 2,
-      y: 0,
-      width: LANE_W,
-      height: ROW_H,
-    }),
-  ]
+function strokePath(stroke: GraphRowStroke, nodeX: number): string {
+  const from = stroke.prior === undefined ? nodeX : laneX(stroke.prior)
+  const to = stroke.next === undefined ? nodeX : laneX(stroke.next)
+  if (stroke.prior === undefined) return branchPath(from, to)
+  if (stroke.next === undefined) return joinPath(from, to)
+  if (from === to) return `M${from} 0V${ROW_H}`
+  return stepPath(from, to)
 }
 
-/**
- * Whether a line reaches a lane from the row above it.
- *
- * The layout names what leaves a row, never what enters it, and the two are not
- * symmetric: a stroke that ends at the node stops halfway down, while one that
- * runs past the row reaches the next row's top edge. Reading the previous row
- * is therefore what tells a row whether its own lane already has a line above
- * it — a tip the history starts at does not, which is why its slice holds only a
- * dot.
- * @param previous - the row above, absent for the first row of the list.
- * @param lane - the lane being asked about.
- * @returns true when a stroke crossed the boundary between the two rows.
- */
-function continuesFromAbove(previous: GraphRow | undefined, lane: number): boolean {
-  if (previous === undefined) return false
-  return previous.segments.some(segment => segment.lane === lane
-    && (segment.kind === 'through' || segment.kind === 'down' || segment.kind === 'merge-out'))
-}
-
-/**
- * The path one stroke draws inside its row.
- *
- * The turns are cubics whose control points leave and enter vertically, which is
- * what makes a branch bend rather than break at a right angle. Every stroke ends
- * on a horizontal edge, or at the node, so a slice never needs to know where its
- * neighbour put anything.
- * @param segment - one stroke of the row.
- * @param rowLane - the lane the row's own node sits in.
- * @param above - whether a line already reaches this row's own lane from above.
- * @returns the `d` attribute, or undefined when the stroke would be a point.
- */
-function segmentPath(segment: GraphLaneSegment, rowLane: number, above: boolean): string | undefined {
-  // A folded stretch draws nothing in the rows it covers: the arrow at each end
-  // is the whole mark, which is what keeps a waiting branch from painting a
-  // parallel line down the entire list.
-  if (segment.collapsed === true) return undefined
-  const x = laneCenter(segment.lane)
-  const mid = ROW_H / 2
-  const quarter = ROW_H / 4
-  const threeQuarters = (ROW_H * 3) / 4
-  // The row's own lane may already carry a line down to the node, and drawing a
-  // second stroke from the middle would leave the top half of the row empty.
-  const start = above ? 0 : mid
-  switch (segment.kind) {
-    case 'through':
-      return `M${x} 0V${ROW_H}`
-    case 'up':
-      return above ? `M${x} 0V${mid}` : undefined
-    case 'down':
-      return `M${x} ${start}V${ROW_H}`
-    case 'merge-in':
-      return `M${x} 0C${x} ${quarter},${laneCenter(rowLane)} ${quarter},${laneCenter(rowLane)} ${mid}`
-    case 'merge-out': {
-      const y = laneCenter(rowLane)
-      if (y === x) return undefined
-      return `M${y} ${mid}C${y} ${threeQuarters},${x} ${threeQuarters},${x} ${ROW_H}`
-    }
+/** A full row: a vertical run, a rounded step at the node's height, a second run. */
+function stepPath(from: number, to: number): string {
+  const middle = ROW_H / 2
+  if (to < from) {
+    return `M${from} 0V${middle - TURN_R}` +
+      `A${TURN_R} ${TURN_R} 0 0 1 ${from - TURN_R} ${middle}` +
+      `H${to + TURN_R}` +
+      `A${TURN_R} ${TURN_R} 0 0 0 ${to} ${middle + TURN_R}` +
+      `V${ROW_H}`
   }
+  return `M${from} 0V${middle - TURN_R}` +
+    `A${TURN_R} ${TURN_R} 0 0 0 ${from + TURN_R} ${middle}` +
+    `H${to - TURN_R}` +
+    `A${TURN_R} ${TURN_R} 0 0 1 ${to} ${middle + TURN_R}` +
+    `V${ROW_H}`
 }
 
-/** The horizontal centre of one lane. */
-function laneCenter(lane: number): number {
-  return lane * LANE_W + LANE_W / 2
+/** The top half: a run down from the edge, then a rounded turn into the node. */
+function joinPath(from: number, nodeX: number): string {
+  const middle = ROW_H / 2
+  if (from === nodeX) return `M${from} 0V${middle}`
+  if (from > nodeX) {
+    return `M${from} 0V${middle - TURN_R}` +
+      `A${TURN_R} ${TURN_R} 0 0 1 ${from - TURN_R} ${middle}` +
+      `H${nodeX}`
+  }
+  return `M${from} 0V${middle - TURN_R}` +
+    `A${TURN_R} ${TURN_R} 0 0 0 ${from + TURN_R} ${middle}` +
+    `H${nodeX}`
 }
 
-/** The ink of one lane, wrapped around the palette so any depth gets a colour. */
-function laneColor(lane: number): string {
+/** The bottom half: a rounded turn out of the node, then a run to the edge. */
+function branchPath(nodeX: number, to: number): string {
+  const middle = ROW_H / 2
+  if (nodeX === to) return `M${nodeX} ${middle}V${ROW_H}`
+  if (to > nodeX) {
+    return `M${nodeX} ${middle}H${to - TURN_R}` +
+      `A${TURN_R} ${TURN_R} 0 0 1 ${to} ${middle + TURN_R}` +
+      `V${ROW_H}`
+  }
+  return `M${nodeX} ${middle}H${to + TURN_R}` +
+    `A${TURN_R} ${TURN_R} 0 0 0 ${to} ${middle + TURN_R}` +
+    `V${ROW_H}`
+}
+
+/**
+ * The x of one column's centre.
+ *
+ * The drawing keeps one column of padding on the left, so the outermost line of a
+ * graph that starts at the head's column is never cut by the gutter's edge; the
+ * right side gets the same padding from the width.
+ * @param lane - the column, counted from zero.
+ * @returns the x in pixels.
+ */
+function laneX(lane: number): number {
+  return LANE_W * (lane + 1)
+}
+
+/** The ink of one palette slot, wrapped around the palette so any depth gets a colour. */
+function slotColor(slot: number): string {
   const size = LANE_COLORS.length
-  return LANE_COLORS[((lane % size) + size) % size] ?? 'currentColor'
+  return LANE_COLORS[((slot % size) + size) % size] ?? 'currentColor'
 }
 
 /** The share of a scrolling element's position this module reads. */

@@ -27,6 +27,8 @@ export interface CommitBoxProps {
   readonly stagedCount: number
   /** Tracked files the working tree still holds; zero hides the stage-all option. */
   readonly unstagedCount: number
+  /** Files ticked in the change list; zero means the everyday button has nothing to commit. */
+  readonly pickedCount: number
   /** Whether the repository has a configured author. */
   readonly identityMissing: boolean
   /** Whether a commit is running. */
@@ -48,7 +50,7 @@ export interface CommitBoxProps {
   onRecentToggle(): void
   /** Ask a model to word the message. */
   onDraft(): void
-  /** Commit the index, or stage everything first when nothing is staged. */
+  /** Commit the ticked files, or stage everything first when nothing is ticked. */
   onSubmit(stageAll: boolean): void
   /** Commit, then push the branch. */
   onSubmitAndPush(stageAll: boolean): void
@@ -68,6 +70,9 @@ export function blockedReasonKey(props: CommitBoxProps): string | undefined {
   // index size only blocks a commit when there is nothing to stage either. An
   // amend rewrites the previous commit, which needs no index at all.
   if (props.stagedCount === 0 && !props.amend && props.unstagedCount === 0) return 'commit.nothingStaged'
+  // The everyday button commits what the boxes ticked, and the stage-all button
+  // is the one that needs no ticks because it decides the content itself.
+  if (props.pickedCount === 0 && !props.amend && props.stagedCount > 0) return 'commit.noPick'
   if (props.message.trim() === '') return 'commit.emptyMessage'
   return undefined
 }
@@ -86,6 +91,9 @@ export function hintOf(props: CommitBoxProps): string {
   const blocked = blockedReasonKey(props)
   if (blocked !== undefined) return props.t(blocked)
   if (props.identityMissing) return props.t('commit.identityMissing')
+  // The picked count is the one fact that describes what a new commit will hold,
+  // so it outranks both the amend note and the index size.
+  if (props.pickedCount > 0) return props.t('commit.pickedHint', { count: props.pickedCount })
   if (props.amend) return props.t('commit.amendHint')
   if (props.stagedCount === 0) return props.t('commit.stageAllHint', { count: props.unstagedCount })
   return props.t('commit.hint', { count: props.stagedCount })
@@ -104,7 +112,7 @@ export function hintOf(props: CommitBoxProps): string {
 export function CommitBox(React: ReactLike, props: CommitBoxProps): unknown {
   const { t, busy, identityMissing, canAmend, recent, recentOpen } = props
   const blocked = blockedReasonKey(props)
-  const stageAll = props.stagedCount === 0
+  const stageAll = props.stagedCount === 0 && props.pickedCount === 0
   const submit = (): void => { if (blocked === undefined) props.onSubmit(stageAll) }
   const submitAndPush = (): void => { if (blocked === undefined) props.onSubmitAndPush(stageAll) }
 

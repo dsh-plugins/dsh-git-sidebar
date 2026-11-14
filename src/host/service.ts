@@ -36,7 +36,7 @@ import {
   type ScanConfig, type ScannedRepository,
 } from './repos.ts'
 import { NoRepository, messageOf, readIdentity, readStatus, topLevel, unavailable } from './status.ts'
-import { commitStaged, hasStagedChanges, write } from './write.ts'
+import { commitPaths, commitStaged, hasStagedChanges, write } from './write.ts'
 import type { WriteKind } from './write.ts'
 
 /** Prototype property the Typert runtime reads for the Remote method table. */
@@ -535,8 +535,8 @@ export class GitSidebarService extends TypertRemoteService {
   }
 
   /**
-   * Commit the index with the given message.
-   * @param args - the Session and the commit message.
+   * Commit the index, or only the paths the reader picked, with the given message.
+   * @param args - the Session, the commit message, and the picked paths when any.
    * @returns the new commit and snapshot, or the refusal.
    */
   async commit(args?: CommitArgs): Promise<CommitOutcome> {
@@ -549,6 +549,13 @@ export class GitSidebarService extends TypertRemoteService {
     if (message.length === 0) return { ok: false, problem: 'empty-message', message: 'a commit needs a message' }
     const amend = args?.amend === true
     const stageAll = args?.stageAll === true
+    const paths = Array.isArray(args?.paths)
+      ? args.paths.filter((path): path is string => typeof path === 'string')
+      : []
+    if (!paths.every(isRepositoryPath)) {
+      return { ok: false, problem: 'failed', message: 'a picked path is outside the repository' }
+    }
+    const only = paths.length > 0
     try {
       const root = await this.rootOf(session, this.baseOf(session, directory))
       const git = gitIn(this.home, this.config, session, root, this.signalOf())
@@ -562,13 +569,16 @@ export class GitSidebarService extends TypertRemoteService {
           }
         }
       }
-      if (stageAll) await write(git, 'stage', { paths: await allPaths(git), includeUntracked: false })
+      if (stageAll && !only) await write(git, 'stage', { paths: await allPaths(git), includeUntracked: false })
       // An amend may fold nothing new into the commit, so the index check only
-      // applies when a new commit is being made.
-      if (!amend && !(await hasStagedChanges(git))) {
+      // applies when a new commit is being made. Picked paths are the commit's
+      // whole content, so what the index holds says nothing about them either.
+      if (!only && !amend && !(await hasStagedChanges(git))) {
         return { ok: false, problem: 'nothing-staged', message: 'the index holds no change to commit' }
       }
-      const commit = await commitStaged(git, message, amend)
+      const commit = only
+        ? await commitPaths(git, message, paths, amend)
+        : await commitStaged(git, message, amend)
       return { ok: true, commit, snapshot: await this.snapshot(session, root) }
     } catch (error) {
       return { ok: false, problem: 'failed', message: messageOf(error) }
@@ -757,6 +767,21 @@ async function allPaths(git: GitRunner): Promise<string[]> {
     .split('\0')
     .map(entry => entry.slice(3).trim())
     .filter(path => path.length > 0)
+}
+
+/**
+ * Whether a path from the browser names something inside the repository.
+ *
+ * Git runs at the top level, so an absolute path or one that climbs out with
+ * `..` would name a file the panel never listed.
+ * @param path - the path the browser sent.
+ * @returns whether Git may be given it after `--`.
+ */
+function isRepositoryPath(path: string): boolean {
+  if (path.length === 0) return false
+  if (path.startsWith('/') || path.startsWith('\\')) return false
+  if (/^[A-Za-z]:/.test(path)) return false
+  return path.split(/[\\/]/).every(segment => segment !== '..')
 }
 
 /** The refusal a hunk write returns when the diff it was asked about is no longer the current one. */

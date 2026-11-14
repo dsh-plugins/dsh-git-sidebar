@@ -245,6 +245,13 @@ export interface CommitArgs {
   readonly amend?: boolean
   /** Stage every tracked change before committing. */
   readonly stageAll?: boolean
+  /**
+   * Commit only these paths, leaving the rest of the index as it is.
+   *
+   * Relative to the repository root. Absent means the commit takes the whole
+   * index, which is what a client that predates the picks sends.
+   */
+  readonly paths?: readonly string[]
 }
 
 /** What a decoration on a commit names. */

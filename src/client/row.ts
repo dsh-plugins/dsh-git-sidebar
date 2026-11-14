@@ -47,8 +47,12 @@ export interface RowProps {
   readonly t: Translate
   /** Whether this row is part of the current selection. */
   readonly selected?: boolean
+  /** Whether this file is ticked for the next commit. */
+  readonly picked?: boolean
   /** Handle a click that is about selection rather than opening the row. */
   readonly onSelect?: (event: { readonly shiftKey: boolean; readonly metaKey: boolean; readonly ctrlKey: boolean }) => void
+  /** Handle a change of the row's commit box; absent leaves the row without one. */
+  readonly onPick?: (picked: boolean) => void
 }
 
 /** A path split into the head that gives up space and the tail that stays whole. */
@@ -115,6 +119,7 @@ export function makeFileRow(React: ReactLike): (props: RowProps) => unknown {
       'data-selected': props.selected === true ? '' : undefined,
       'aria-selected': props.selected === true ? 'true' : undefined,
     },
+    props.onPick === undefined ? null : pickBox(React, props),
     React.createElement('button', {
       type: 'button',
       className: `${PREFIX}-open`,
@@ -153,6 +158,31 @@ export interface RowSelectEvent {
   readonly shiftKey: boolean
   readonly metaKey: boolean
   readonly ctrlKey: boolean
+}
+
+/**
+ * The commit box that sits at the start of a row.
+ *
+ * Ticking is about the next commit, not about the row: the click must not reach
+ * the button it sits beside, which would open the file's diff.
+ * @param React - the loader's React.
+ * @param props - the row, whose path names the box and whose handler records it.
+ * @returns the checkbox.
+ */
+function pickBox(React: ReactLike, props: RowProps): unknown {
+  const label = props.t('row.pick', { path: props.entry.path })
+  return React.createElement('input', {
+    type: 'checkbox',
+    className: `${PREFIX}-pick`,
+    'data-git-pick': props.entry.path,
+    'aria-label': label,
+    title: label,
+    checked: props.picked === true,
+    onChange: (event: { target: { checked: boolean } }) => {
+      props.onPick?.(event.target.checked)
+    },
+    onClick: (event: { stopPropagation(): void }) => { event.stopPropagation() },
+  })
 }
 
 /** One text whose middle gives way: an overflowing head, then a whole tail. */

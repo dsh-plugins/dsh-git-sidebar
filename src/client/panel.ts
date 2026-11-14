@@ -35,8 +35,12 @@ import { Icon } from './icons.ts'
 import { makeFileRow, type RowAction } from './row.ts'
 import { makeStashGroup, type StashProps } from './stash-group.ts'
 import { PREFIX } from './styles.ts'
+import {
+  gitPane, PANE_DEFAULTS, PANES_EXPANDED, paneKeySize, startPaneDrag,
+  type PaneCollapsed, type PaneId, type PaneKeyEvent, type PanePointerEvent, type PaneSizes,
+} from './panes.ts'
 import { conflictNotice, makeConflictView } from './conflict-view.ts'
-import { rangeBetween, selectionKey, type SelectionKey } from './list-model.ts'
+import { rangeBetween, selectionKey, togglePick, type SelectionKey } from './list-model.ts'
 import type { RowSelectEvent } from './row.ts'
 import {
   appendHistory, createPanelCache, forgetHistory, invalidateSession, rememberStashes, rememberStatus,
@@ -141,7 +145,10 @@ interface SessionCalls {
   stage(paths: readonly string[]): Promise<WriteOutcome>
   unstage(paths: readonly string[]): Promise<WriteOutcome>
   discard(paths: readonly string[], includeUntracked: boolean): Promise<WriteOutcome>
-  commit(message: string, options?: { amend?: boolean; stageAll?: boolean }): ReturnType<GitSidebarApi['commit']>
+  commit(
+    message: string,
+    options?: { amend?: boolean; stageAll?: boolean; paths?: readonly string[] },
+  ): ReturnType<GitSidebarApi['commit']>
   generateMessage(staged: boolean): Promise<MessageDraft>
   branches(): Promise<BranchList>
   checkout(branch: string): Promise<WriteOutcome>
@@ -196,12 +203,23 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const [recent, setRecent] = React.useState<readonly string[]>(subjectsOf(cache.history.get(sessionId)))
     const [notice, setNotice] = React.useState('')
     const [stashes, setStashes] = React.useState<readonly StashEntry[]>(cachedStashes ?? [])
-    const [historyOpen, setHistoryOpen] = React.useState(true)
+    // The three regions of the body, each with the height the reader gave it and
+    // a fold of its own. They are per mount, so a closed and reopened tab starts
+    // from the defaults again.
+    const [paneSizes, setPaneSizes] = React.useState<PaneSizes>(PANE_DEFAULTS)
+    const [collapsedPanes, setCollapsedPanes] = React.useState<PaneCollapsed>(PANES_EXPANDED)
+    // The drag in flight. A cell rather than a hook: the panel needs its stop
+    // function in the cleanup of an effect, and no other hook can hold it.
+    const [drag] = React.useState<{ stop: (() => void) | undefined }>({ stop: undefined })
     const [conflict, setConflict] = React.useState<OpenConflict | null>(null)
     const [filter, setFilter] = React.useState('')
     const [section, setSection] = React.useState<Section>('unstaged')
     const [selected, setSelected] = React.useState<readonly SelectionKey[]>([])
     const [anchor, setAnchor] = React.useState<string | null>(null)
+    // The files the next commit takes. One set across both groups, kept apart
+    // from the row selection: selecting says what a group action acts on, ticking
+    // says what the commit holds.
+    const [picked, setPicked] = React.useState<readonly string[]>([])
     // Which read the first paint came from, which is what a test can observe
     // without counting requests: `hit` means the cache answered.
     const [cacheState] = React.useState<'hit' | 'miss'>(cachedStatus === undefined ? 'miss' : 'hit')
@@ -427,6 +445,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         rememberStashes(cache, sessionId, [])
         setConflict(null)
         clearSelection()
+        setPicked([])
         runtime.clearDiffCache?.()
         dropHistory()
         void loadStashes(true)
@@ -699,6 +718,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
 
     /**
      * Commit the written message, amending or staging everything when asked.
+     *
+     * Ticked paths narrow the commit to those files; a stage-all commit decides
+     * its own content, so the ticks do not apply to it.
      * @param stageAll - stage every tracked change first, for a commit with an
      * empty index.
      */
@@ -707,7 +729,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       if (text === '') return
       setNotice('')
       setBusy(true)
-      void calls.commit(text, { amend, stageAll })
+      const paths = stageAll || picked.length === 0 ? undefined : [...picked]
+      const options = paths === undefined ? { amend, stageAll } : { amend, stageAll, paths }
+      void calls.commit(text, options)
         .catch((error: unknown) => ({ ok: false as const, problem: 'failed' as const, message: messageOf(error) }))
         .then((outcome) => {
           setBusy(false)
@@ -719,6 +743,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
           setSnapshot(outcome.snapshot)
           setMessage('')
           setAmend(false)
+          setPicked([])
           // A commit is the newest row of the log, so the cached page is stale.
           dropHistory()
         })
@@ -746,7 +771,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const pushAfterCommit = (text: string, stageAll: boolean): void => {
       setNotice('')
       setBusy(true)
-      void calls.commit(text, { amend, stageAll })
+      const paths = stageAll || picked.length === 0 ? undefined : [...picked]
+      const options = paths === undefined ? { amend, stageAll } : { amend, stageAll, paths }
+      void calls.commit(text, options)
         .catch((error: unknown) => ({ ok: false as const, problem: 'failed' as const, message: messageOf(error) }))
         .then((outcome) => {
           if (!outcome.ok) {
@@ -758,6 +785,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
           setSnapshot(outcome.snapshot)
           setMessage('')
           setAmend(false)
+          setPicked([])
           dropHistory()
           return calls.sync('push')
             .catch((error: unknown) => ({ ok: false as const, problem: 'failed' as const, message: messageOf(error) }))
@@ -817,6 +845,89 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       }, diffAction]
     }
 
+    /** The history section is open exactly while its region is expanded. */
+    const historyOpen = !collapsedPanes.history
+
+    /**
+     * Set one region's height, expanding it when the gesture found it folded.
+     *
+     * A drag or an arrow key is the reader asking to see the region, so a folded
+     * one opens at the height the gesture produced rather than swallowing it.
+     * @param id - the region.
+     * @param size - the height it should take.
+     */
+    const sizePane = (id: PaneId, size: number): void => {
+      setPaneSizes(previous => ({ ...previous, [id]: size }))
+      setCollapsedPanes(previous => (previous[id] ? { ...previous, [id]: false } : previous))
+    }
+
+    /**
+     * Fold one region to its title, or unfold it at the height it had.
+     * @param id - the region.
+     */
+    const togglePane = (id: PaneId): void => {
+      setCollapsedPanes(previous => ({ ...previous, [id]: !previous[id] }))
+    }
+
+    /**
+     * Follow a pointer press on one region's handle until it is released.
+     * @param id - the region.
+     * @param event - the press, whose height the drag measures against.
+     */
+    const startResize = (id: PaneId, event: PanePointerEvent): void => {
+      event.preventDefault?.()
+      if (typeof window === 'undefined') return
+      drag.stop?.()
+      drag.stop = startPaneDrag({
+        size: paneSizes[id],
+        startY: event.clientY,
+        window,
+        onSize: (size) => { sizePane(id, size) },
+      })
+    }
+
+    /**
+     * Move one region's handle from the keyboard.
+     * @param id - the region.
+     * @param event - the key, which is only acted on when the handle owns it.
+     */
+    const resizeByKey = (id: PaneId, event: PaneKeyEvent): void => {
+      const next = paneKeySize(id, paneSizes[id], event.key)
+      if (next === undefined) return
+      event.preventDefault?.()
+      sizePane(id, next)
+    }
+
+    // A panel that closes mid-drag must leave neither the window listeners nor
+    // the body's no-select state behind.
+    React.useEffect(() => () => {
+      drag.stop?.()
+      drag.stop = undefined
+    }, [])
+
+    /**
+     * One region of the body: its handle, its title, and what it holds.
+     * @param id - the region.
+     * @param title - what the region is called.
+     * @param content - what it holds while it is expanded.
+     * @returns the region.
+     */
+    const pane = (id: PaneId, title: string, content: unknown): unknown => gitPane(React, {
+      id,
+      title,
+      size: paneSizes[id],
+      collapsed: collapsedPanes[id],
+      t,
+      content,
+      onToggle: () => { togglePane(id) },
+      onResizeStart: (event) => { startResize(id, event) },
+      onResizeKey: (event) => { resizeByKey(id, event) },
+    })
+
+    /** The regions as one column, which is what scrolls when their heights do not fit. */
+    const panes = (...regions: readonly unknown[]): unknown =>
+      React.createElement('div', { className: `${PREFIX}-panes`, 'data-git-panes': '' }, ...regions)
+
     const headerProps = (): BranchHeaderProps => ({
       snapshot,
       loading,
@@ -855,6 +966,40 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     })
 
     /**
+     * The commit box, which a clean tree and a dirty one both draw.
+     *
+     * A clean tree keeps it because amending the previous message is a
+     * legitimate clean-tree operation, and the counts it shows are zero because
+     * there is nothing to commit either way.
+     * @param clean - whether the working tree and the index both match HEAD.
+     * @returns the box.
+     */
+    const commitBox = (clean: boolean): unknown => {
+      const now = current()
+      return CommitBox(React, {
+        message,
+        stagedCount: clean ? 0 : now.staged.length,
+        unstagedCount: clean ? 0 : now.unstaged.length,
+        pickedCount: picked.length,
+        clean,
+        identityMissing: isIdentityMissing(now.identity),
+        busy,
+        canAmend: now.commit !== null && now.commit !== undefined,
+        amend,
+        recent,
+        recentOpen,
+        drafting,
+        onDraft: draftMessage,
+        onRecentToggle: () => { setRecentOpen(!recentOpen) },
+        t,
+        onChange: setMessage,
+        onAmendChange: setAmend,
+        onSubmit: commitWith,
+        onSubmitAndPush: commitAndPush,
+      })
+    }
+
+    /**
      * The messages worth offering back: the newest subjects the cache holds.
      *
      * A reader who commits the same kind of change repeatedly wants the wording
@@ -869,7 +1014,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       // that happened, so the revision is only what the head shows: the list
       // itself reads from the cache until a write invalidates it.
       revision: historyRevision,
-      onToggle: () => { setHistoryOpen(!historyOpen) },
+      // The history's own title button and the region's head fold the same
+      // state, so the two can never disagree about whether the list is open.
+      onToggle: () => { togglePane('history') },
       // The history head keeps the panel's own refresh, so a reader reading the
       // graph can ask for a new snapshot without scrolling back up.
       onRefresh: refresh,
@@ -920,6 +1067,18 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     const clearSelection = (): void => {
       setSelected([])
       setAnchor(null)
+    }
+
+    /**
+     * Record one commit box as ticked or unticked.
+     *
+     * Both groups feed one set, so a path staged and changed at once is ticked
+     * by either row and appears once in the commit.
+     * @param path - the row's repository-relative path.
+     * @param on - whether the box is now ticked.
+     */
+    const pickFile = (path: string, on: boolean): void => {
+      setPicked(current => togglePick(current, path, on))
     }
 
     /**
@@ -1045,6 +1204,8 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
             actions: rowActions(entry, true, false),
             t,
             selected: selected.includes(selectionKey('staged', entry.path)),
+            picked: picked.includes(entry.path),
+            onPick: (on: boolean) => { pickFile(entry.path, on) },
             onSelect: (event: RowSelectEvent) => {
               selectRow('staged', visible(snapshotNow.staged, true), entry.path, event.shiftKey)
             },
@@ -1062,6 +1223,8 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
             actions: rowActions(entry, false, false),
             t,
             selected: selected.includes(selectionKey('unstaged', entry.path)),
+            picked: picked.includes(entry.path),
+            onPick: (on: boolean) => { pickFile(entry.path, on) },
             onSelect: (event: RowSelectEvent) => {
               selectRow('unstaged', visible(snapshotNow.unstaged, false), entry.path, event.shiftKey)
             },
@@ -1110,7 +1273,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       React.createElement(Progress, { active: loading || refreshing }),
       React.createElement(BranchHeader, headerProps()),
       stateBlock(React, t(`state.${problem}.title`), t(`state.${problem}.body`), snapshot.message),
-      historyElement(),
+      panes(pane('history', t('history.title'), historyElement())),
       React.createElement(DialogHost, null),
       )
     }
@@ -1131,27 +1294,10 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       notice === '' ? null : React.createElement('p', { className: `${PREFIX}-notice`, role: 'alert' }, notice),
       stateBlock(React, t('state.clean.title'), t('state.clean.body')),
       React.createElement(StashGroup, stashProps()),
-      CommitBox(React, {
-        message,
-        stagedCount: 0,
-        unstagedCount: 0,
-        clean: true,
-        identityMissing: isIdentityMissing(snapshot.identity),
-        busy,
-        canAmend: snapshot.commit !== null && snapshot.commit !== undefined,
-        amend,
-        recent,
-        recentOpen,
-        drafting,
-        onDraft: draftMessage,
-        onRecentToggle: () => { setRecentOpen(!recentOpen) },
-        t,
-        onChange: setMessage,
-        onAmendChange: setAmend,
-        onSubmit: commitWith,
-        onSubmitAndPush: commitAndPush,
-      }),
-      historyElement(),
+      panes(
+        pane('commit', t('pane.commit'), commitBox(true)),
+        pane('history', t('history.title'), historyElement()),
+      ),
       React.createElement(DialogHost, null),
       )
     }
@@ -1164,28 +1310,11 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     },
       React.createElement(Progress, { active: loading || refreshing }),
       React.createElement(BranchHeader, headerProps()),
-      bodyElement(snapshot),
-      CommitBox(React, {
-        message,
-        stagedCount: snapshot.staged.length,
-        unstagedCount: snapshot.unstaged.length,
-        clean: false,
-        identityMissing: isIdentityMissing(snapshot.identity),
-        busy,
-        canAmend: snapshot.commit !== null && snapshot.commit !== undefined,
-        amend,
-        recent,
-        recentOpen,
-        drafting,
-        onDraft: draftMessage,
-        onRecentToggle: () => { setRecentOpen(!recentOpen) },
-        t,
-        onChange: setMessage,
-        onAmendChange: setAmend,
-        onSubmit: commitWith,
-        onSubmitAndPush: commitAndPush,
-      }),
-      historyElement(),
+      panes(
+        pane('changes', t('group.changes'), bodyElement(snapshot)),
+        pane('commit', t('pane.commit'), commitBox(false)),
+        pane('history', t('history.title'), historyElement()),
+      ),
       React.createElement(DialogHost, null),
     )
   }

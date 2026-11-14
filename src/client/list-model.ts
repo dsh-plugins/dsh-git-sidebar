@@ -93,6 +93,21 @@ export function filterEntries(entries: readonly ChangeEntry[], filter: string): 
 }
 
 /**
+ * Add or remove one path from the commit picks.
+ *
+ * The picks are one set across both groups: the same path may appear in the
+ * staged list and the changes list, and ticking either ticked it for the commit.
+ * @param picks - the paths picked so far.
+ * @param path - the path whose box changed.
+ * @param picked - whether the box is now ticked.
+ * @returns the new set of paths.
+ */
+export function togglePick(picks: readonly string[], path: string, picked: boolean): string[] {
+  if (!picked) return picks.filter(existing => existing !== path)
+  return picks.includes(path) ? [...picks] : [...picks, path]
+}
+
+/**
  * The entries a range selection covers, in list order.
  *
  * Shift-click means "everything between the two clicks", which requires the
