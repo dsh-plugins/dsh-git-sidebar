@@ -27,6 +27,9 @@ import { PREFIX } from './styles.ts'
 /** Commits one page carries. */
 const PAGE = 20
 
+/** Width the commit menu reserves, used to keep it inside the viewport. */
+const MENU_W = 190
+
 /** Width of one lane, and so the gutter's unit of measure. */
 const LANE_W = 14
 
@@ -90,6 +93,12 @@ export interface HistoryProps {
   readonly initial?: { readonly commits: readonly CommitEntry[]; readonly hasMore: boolean }
   /** Store a page the list just read, so the next mount can draw it. */
   readonly remember?: (page: { commits: readonly CommitEntry[]; hasMore: boolean }) => void
+  /** Check out one commit, leaving the branch and landing on a detached head. */
+  onCheckout?(sha: string): void
+  /** Create a branch starting at one commit. */
+  onBranchFrom?(sha: string): void
+  /** Put one commit's object name on the clipboard. */
+  onCopy?(sha: string): void
 }
 
 /**
@@ -169,13 +178,41 @@ export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown 
       moveRowFocus(event)
     }
 
+    /**
+     * Which commit's menu is open, and where it was asked for.
+     *
+     * The menu is positioned rather than nested: the list scrolls, so a menu
+     * drawn inside a row would be clipped by the scroller. Keeping the anchor
+     * in state is what lets the menu render outside it.
+     */
+    const [menu, setMenu] = React.useState<CommitMenu | null>(null)
+    const openMenu = (sha: string, node: MenuAnchor | null): void => {
+      if (node === null) return
+      const box = node.getBoundingClientRect()
+      setMenu({ sha, top: box.bottom + 4, left: Math.max(8, box.right - MENU_W) })
+    }
+    const closeMenu = (): void => { setMenu(null) }
+
     const layout = layoutGraph(commits.map(commit => ({
       sha: commit.sha,
       parents: commit.parents ?? [],
     })))
     const rows = new Map<string, GraphRow>(layout.rows.map(row => [row.sha, row] as const))
     const lanes = Math.max(1, layout.lanes)
-    const body: BodyView = { commits, rows, lanes, hasMore, loading, failed, more, onScroll, onKeyDown }
+    const body: BodyView = {
+      commits,
+      rows,
+      lanes,
+      hasMore,
+      loading,
+      failed,
+      more,
+      onScroll,
+      onKeyDown,
+      menu,
+      openMenu,
+      closeMenu,
+    }
 
     return React.createElement('section', {
       className: `${PREFIX}-history`,
@@ -207,8 +244,21 @@ export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown 
       }, Icon(React, 'refresh')),
     ),
     open ? historyBody(React, props, body) : null,
+    menu === null ? null : commitMenu(React, props, menu, closeMenu),
     )
   }
+}
+
+/** Which commit's menu is open, and where on screen it hangs. */
+interface CommitMenu {
+  readonly sha: string
+  readonly top: number
+  readonly left: number
+}
+
+/** The share of a DOM node the menu needs to place itself. */
+interface MenuAnchor {
+  getBoundingClientRect(): { readonly bottom: number; readonly right: number }
 }
 
 /** What one page of the list draws, gathered so the render helpers take one object. */
@@ -222,6 +272,9 @@ interface BodyView {
   readonly more: () => void
   readonly onScroll: (event: ScrollPosition) => void
   readonly onKeyDown: (event: RowKeyEvent) => void
+  readonly menu: CommitMenu | null
+  readonly openMenu: (sha: string, node: MenuAnchor | null) => void
+  readonly closeMenu: () => void
 }
 
 /** The scrolling graph, or the sentence that replaces it. */
@@ -292,7 +345,87 @@ function commitRow(
       }, commit.author),
       React.createElement('span', { className: `${PREFIX}-when`, title: commit.when },
         relativeTime(t, commit.when))),
-    ))
+    ),
+    // The menu button is the row's second control, so it sits beside the row
+    // rather than inside it: a button cannot nest in a button, and hovering the
+    // row is what reveals it.
+    React.createElement('button', {
+      type: 'button',
+      className: `${PREFIX}-commit-more`,
+      'data-git-commit-more': commit.sha,
+      title: t('commit.more'),
+      'aria-label': t('commit.more'),
+      'aria-haspopup': 'menu',
+      'aria-expanded': view.menu?.sha === commit.sha ? 'true' : 'false',
+      onClick: (event: MenuEvent) => {
+        event.stopPropagation()
+        if (view.menu?.sha === commit.sha) {
+          view.closeMenu()
+          return
+        }
+        view.openMenu(commit.sha, event.currentTarget)
+      },
+    }, Icon(React, 'more')),
+  )
+}
+
+/** The share of a click the menu button reads. */
+interface MenuEvent {
+  readonly currentTarget: MenuAnchor
+  stopPropagation(): void
+}
+
+/**
+ * The menu one commit offers.
+ *
+ * It hangs in a fixed layer rather than inside the row, because the list it
+ * belongs to scrolls and would clip it. A full-window backdrop closes it, which
+ * is the same dismissal the branch menus use and needs no document listener.
+ * @param React - the loader's React.
+ * @param props - the panel's callbacks.
+ * @param menu - the commit whose menu is open, and where.
+ * @param close - dismissal for every entry and for the backdrop.
+ * @returns the backdrop and the menu.
+ */
+function commitMenu(
+  React: ReactLike,
+  props: HistoryProps,
+  menu: CommitMenu,
+  close: () => void,
+): unknown {
+  const { t } = props
+  const entry = (id: string, label: string, run: (() => void) | undefined): unknown => {
+    if (run === undefined) return null
+    return React.createElement('button', {
+      key: id,
+      type: 'button',
+      className: `${PREFIX}-commit-menu-item`,
+      role: 'menuitem',
+      'data-git-commit-action': id,
+      onClick: () => {
+        close()
+        run()
+      },
+    }, label)
+  }
+  return React.createElement('div', { key: 'commit-menu' },
+    React.createElement('div', { className: `${PREFIX}-backdrop`, 'data-git-dismiss': '', onClick: close }),
+    React.createElement('div', {
+      className: `${PREFIX}-commit-menu`,
+      'data-git-commit-menu': menu.sha,
+      role: 'menu',
+      style: { top: `${menu.top}px`, left: `${menu.left}px` },
+    },
+    entry('checkout', t('commit.checkout'), props.onCheckout === undefined ? undefined : () => {
+      props.onCheckout?.(menu.sha)
+    }),
+    entry('branch', t('commit.branchFrom'), props.onBranchFrom === undefined ? undefined : () => {
+      props.onBranchFrom?.(menu.sha)
+    }),
+    entry('copy', t('commit.copySha'), props.onCopy === undefined ? undefined : () => {
+      props.onCopy?.(menu.sha)
+    })),
+  )
 }
 
 /** One decoration as a capsule, inked by what it names. */

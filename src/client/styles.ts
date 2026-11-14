@@ -1049,6 +1049,73 @@ export const PANEL_STYLES = `
   border-radius: var(--dsw-radius-sm);
 }
 
+/*
+ * The menu button is hidden until the row is hovered or holds the focus, so a
+ * long history reads as a list of commits rather than a grid of controls. It
+ * still occupies its width, which is what keeps the rows from shifting as the
+ * pointer moves down them.
+ */
+.gs-commit-more {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  align-self: center;
+  padding: 0;
+  color: var(--dsw-alias-label-tertiary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.gs-commit-row:hover .gs-commit-more,
+.gs-commit-row:focus-within .gs-commit-more,
+.gs-commit-more[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.gs-commit-more:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+  opacity: 1;
+}
+
+/* Placed by the row's own measurement, so it escapes the list's scroller. */
+.gs-commit-menu {
+  position: fixed;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-md);
+  box-shadow: var(--dsw-shadow-md, 0 6px 18px rgb(0 0 0 / 24%));
+}
+
+.gs-commit-menu-item {
+  padding: 5px 8px;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+}
+
+.gs-commit-menu-item:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
 .gs-commit-open {
   display: grid;
   flex: 1 1 auto;
@@ -1251,6 +1318,11 @@ export const PANEL_STYLES = `
   }
 
   .gs-commit-row:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+
+  .gs-commit-more:hover,
+  .gs-commit-menu-item:hover {
     background: var(--dsw-alias-interactive-bg-hover);
   }
 

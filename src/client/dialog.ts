@@ -175,6 +175,32 @@ export function confirmMerge(t: Translate, branch: string, current: string | nul
 }
 
 /**
+ * Ask before leaving the branch to look at one commit.
+ *
+ * A detached head is the one checkout a reader can land in without noticing: the
+ * header still names a commit, but a commit made there belongs to no branch.
+ * @param t - the panel's translator.
+ * @param short - the abbreviated object name being checked out.
+ * @returns whether the reader agreed.
+ */
+export function confirmDetach(t: Translate, short: string): boolean {
+  return window.confirm(t('dialog.detach', { short }))
+}
+
+/**
+ * Ask for the name of a branch that starts at one commit.
+ * @param t - the panel's translator.
+ * @param short - the abbreviated object name the branch starts at.
+ * @returns the trimmed name, or null when the reader cancelled.
+ */
+export function askBranchName(t: Translate, short: string): string | null {
+  const answer = window.prompt(t('dialog.branchFrom', { short }))
+  if (answer === null) return null
+  const name = answer.trim()
+  return name === '' ? null : name
+}
+
+/**
  * Report a refusal the reader asked for and Git declined.
  *
  * Switching branches over a dirty tree is the case this exists for: the request

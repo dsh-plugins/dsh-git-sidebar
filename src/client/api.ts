@@ -179,7 +179,7 @@ export interface GitSidebarApi {
   requestCommit(args: CommitDetailArgs, signal?: AbortSignal): Promise<DiffPayload>
   branches(sessionId: string): Promise<BranchList>
   checkout(sessionId: string, branch: string): Promise<WriteOutcome>
-  createBranch(sessionId: string, name: string): Promise<WriteOutcome>
+  createBranch(sessionId: string, name: string, from?: string): Promise<WriteOutcome>
   stashes(sessionId: string): Promise<readonly StashEntry[]>
   stash(sessionId: string, message?: string): Promise<WriteOutcome>
   stashApply(sessionId: string, index: number, drop: boolean): Promise<WriteOutcome>
@@ -342,7 +342,7 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
     checkout(sessionId: string, branch: string): Promise<WriteOutcome> {
       return foldWrite(() => remote.checkout({ sessionId, branch }))
     },
-    createBranch(sessionId: string, name: string): Promise<WriteOutcome> {
+    createBranch(sessionId: string, name: string, from?: string): Promise<WriteOutcome> {
       return foldWrite(() => remote.createBranch({ sessionId, name }))
     },
     async stashes(sessionId: string): Promise<readonly StashEntry[]> {

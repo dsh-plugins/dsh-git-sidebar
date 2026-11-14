@@ -26,7 +26,8 @@ import { messageOf, unavailableSnapshot } from './api.ts'
 import { makeBranchHeader, type BranchHeaderProps } from './branch-header.ts'
 import { CommitBox } from './commit-box.ts'
 import {
-  confirmAbort, confirmDeleteBranch, confirmDiscard, confirmForceDelete, confirmMerge, confirmSync, notify,
+  askBranchName, confirmAbort, confirmDeleteBranch, confirmDetach, confirmDiscard, confirmForceDelete,
+  confirmMerge, confirmSync, notify,
 } from './dialog.ts'
 import { makeHistory } from './history.ts'
 import { Icon } from './icons.ts'
@@ -122,7 +123,7 @@ interface SessionCalls {
   commit(message: string, options?: { amend?: boolean; stageAll?: boolean }): ReturnType<GitSidebarApi['commit']>
   branches(): Promise<BranchList>
   checkout(branch: string): Promise<WriteOutcome>
-  createBranch(name: string): Promise<WriteOutcome>
+  createBranch(name: string, from?: string): Promise<WriteOutcome>
   stash(): Promise<WriteOutcome>
   stashApply(index: number, drop: boolean): Promise<WriteOutcome>
   stashDrop(index: number): Promise<WriteOutcome>
@@ -257,7 +258,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         .then(api => api.branches(sessionId))
         .catch(() => EMPTY_BRANCHES),
       checkout: branch => runtime.api.ready.then(api => api.checkout(sessionId, branch)),
-      createBranch: name => runtime.api.ready.then(api => api.createBranch(sessionId, name)),
+      createBranch: (name, from) => runtime.api.ready.then(api => api.createBranch(sessionId, name, from)),
       stash: () => runtime.api.ready.then(api => api.stash(sessionId)),
       stashApply: (index, drop) => runtime.api.ready.then(api => api.stashApply(sessionId, index, drop)),
       stashDrop: index => runtime.api.ready.then(api => api.stashDrop(sessionId, index)),
@@ -418,6 +419,51 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     }
     const createBranch = (name: string): void => {
       write(() => calls.createBranch(name), t('notice.createBranchFailed'), 'log')
+    }
+
+    /**
+     * Check out one commit rather than a branch.
+     *
+     * Git accepts an object name wherever it accepts a ref, so this is the same
+     * call the branch picker makes; what differs is that it leaves a detached
+     * head, which is why the reader is asked first.
+     * @param sha - the commit to check out.
+     */
+    const checkoutCommit = (sha: string): void => {
+      if (!confirmDetach(t, sha.slice(0, 7))) return
+      write(() => calls.checkout(sha), t('notice.checkoutFailed'), 'log')
+    }
+
+    /**
+     * Start a branch at one commit and move onto it.
+     *
+     * The Host creates it with `checkout -b`, so this both names the branch and
+     * switches to it — the same thing the header's new-branch field does, only
+     * from an older commit instead of the current head.
+     * @param sha - the commit the branch starts at.
+     */
+    const branchFromCommit = (sha: string): void => {
+      const name = askBranchName(t, sha.slice(0, 7))
+      if (name === null) return
+      write(() => calls.createBranch(name, sha), t('notice.createBranchFailed'), 'log')
+    }
+
+    /**
+     * Put one commit's object name on the clipboard.
+     *
+     * The full name rather than the abbreviation, because the reason to copy it
+     * is to paste it somewhere that resolves it.
+     * @param sha - the commit whose name is copied.
+     */
+    const copyCommit = (sha: string): void => {
+      const clipboard = navigator.clipboard
+      if (clipboard === undefined) {
+        notify(t('notice.copyFailed'))
+        return
+      }
+      void clipboard.writeText(sha)
+        .then(() => { setNotice(t('notice.copied', { short: sha.slice(0, 7) })) })
+        .catch(() => { notify(t('notice.copyFailed')) })
     }
     const sync = (action: SyncAction): void => {
       if (action !== 'fetch' && !confirmSync(t, action, current().upstream?.name ?? null)) return
@@ -692,6 +738,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         appendHistory(cache, sessionId, page)
         setRecent(subjectsOf(page))
       },
+      onCheckout: checkoutCommit,
+      onBranchFrom: branchFromCommit,
+      onCopy: copyCommit,
     })
 
     const ConflictView = makeConflictView(React)
