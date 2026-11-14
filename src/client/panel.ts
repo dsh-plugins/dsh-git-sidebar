@@ -931,6 +931,49 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     }, [])
 
     /**
+     * Give the room the three regions leave unused to the history.
+     *
+     * The heights are the reader's, so a short window scrolls the column; a tall
+     * one would leave a band of nothing under the last region, which reads as a
+     * list that failed to load the rest of its rows. The history is the region
+     * that can use the room, and rounding it to whole rows keeps the last row
+     * whole while leaving at most one row of slack.
+     */
+    const fitHistory = (): void => {
+      if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return
+      const column = document.querySelector(`.${PREFIX}-panes`)
+      if (column === null) return
+      let above = 0
+      for (const region of Array.from(column.children)) {
+        if (region.getAttribute('data-git-pane') === 'history') continue
+        above += region.getBoundingClientRect().height
+      }
+      const available = Math.round(column.clientHeight - above)
+      if (available < PANE_MIN) return
+      setPaneSizes((previous) => {
+        const fitted = snapPaneSize('history', available, ROW_H, HISTORY_CHROME_H)
+        return fitted === previous.history ? previous : { ...previous, history: fitted }
+      })
+    }
+
+    // Folding a region frees room and unfolding takes it back, so the history is
+    // refitted whenever a fold changes; a window resize changes the room too, and
+    // the first fit has to wait for the snapshot that draws the regions at all.
+    // A drag of the regions above also changes what is left, and refitting there
+    // is a no-op for a history drag, because that one only moves room between two
+    // regions and leaves the total unchanged.
+    React.useEffect(() => {
+      fitHistory()
+      if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
+      const onResize = (): void => { fitHistory() }
+      window.addEventListener('resize', onResize)
+      return () => { window.removeEventListener('resize', onResize) }
+    }, [
+      collapsedPanes.changes, collapsedPanes.commit, collapsedPanes.history,
+      paneSizes.changes, paneSizes.commit, snapshot,
+    ])
+
+    /**
      * One region of the body: its handle, its title, and what it holds.
      * @param id - the region.
      * @param title - what the region is called.
