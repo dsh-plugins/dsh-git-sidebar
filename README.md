@@ -18,7 +18,8 @@ DeepSeek Harness 的 Git 面板插件（`@dsh-plugin/dsh-git-sidebar`，仓库�
 | 未配置 `user.name`/`user.email` 时的提示 | 已实现 |
 | 放弃改动的确认对话框（未跟踪文件单独警告） | 已实现 |
 | 统一 diff 标签页，行级增删高亮 + 行号 | 已实现 |
-| 提交历史（分页、refs 标签、点开单提交 diff） | 已实现 |
+| 提交历史**泳道图**（分叉/合并在图上连通，8 色泳道，refs 按类型上色） | 已实现 |
+| 分页、点开单提交 diff、折叠、方向键移动焦点 | 已实现 |
 | 分支选择器：列出 / 切换 / 新建；脏工作区拒绝切换 | 已实现 |
 | 储藏：储藏当前改动、应用、弹出、删除 | 已实现 |
 | 同步：fetch / pull（仅快进）/ push，push 与 pull 先确认 | 已实现 |
@@ -30,7 +31,8 @@ DeepSeek Harness 的 Git 面板插件（`@dsh-plugin/dsh-git-sidebar`，仓库�
 
 安装并启用后刷新页面，右侧栏「开始」页即出现 **Git 面板**。点开后面板读取该会话工作目录的仓库：
 
-- 顶部分支名可点击，展开分支选择器：列出本地分支、切换、新建。分支头右侧 `⋯` 菜单提供 fetch / pull / push 与储藏当前改动；`pull` 只做快进，`push` 与 `pull` 都会先确认。
+- 提交历史以**泳道图**呈现：分叉、合并、根提交都在图上连通，左侧每条泳道一色（8 色，明暗主题各自可辨）。refs 按类型上色（当前分支 / 本地分支 / 远程跟踪 / tag）。点一行打开该提交自己的 diff；滚动到底自动加载下一页；方向键上下移动焦点。
+- 顶部分支名可点击，展开分支选择器：列出本地分支、切换、新建、删除（未合并会二次确认）；`⋯` 菜单提供 fetch / pull / push、储藏当前改动、以及合并某个分支到当前分支。`pull` 只做快进，`push` 与 `pull` 都会先确认。
 - 改动按「暂存更改」「更改」分组；把鼠标移到文件行上会显示操作按钮，键盘聚焦或触屏上常驻显示。
 - 点文件行本身在右侧栏打开该文件的 diff，可与其他标签页并存；点历史里的提交打开该提交自己的 diff。
 - 提交框可用 `Ctrl+Enter`（macOS 上 `Cmd+Enter`）提交。暂存区为空时按钮变成「暂存全部并提交」；勾选「改写上次提交」可修改上一条提交信息（工作区干净时也能用）。
@@ -93,7 +95,7 @@ $env:DSH_PERMISSION_MODE = 'danger-full-access'
 & $env:DSH_NODE_EXECUTABLE (Join-Path $env:DSH_INSTALL_DIR 'lib\bin.js') --profile web --no-open --port 4400
 ```
 
-测试脚本：`test.mjs`（按钮位置）、`git-test.mjs`（P0 主流程）、`diff-test.mjs`（差异视图）、`p1-test.mjs`（历史/分支/储藏）、`sync-test.mjs`（对本地裸仓库的 fetch/pull/push）、`conflict-test.mjs`（冲突逐区解决与中止）、`amend-test.mjs`（暂存全部并提交、改写上次提交）、`dark.mjs`（深色）、`contract.mjs`（契约漂移）、`locale-parity.mjs`（中英键一致）、`parity.mjs`（两个图标是否一致）、`pluginrow.mjs`（插件管理行图标）、`detail.mjs`（详情页插图）。截图输出到 `run/shots/`。
+测试脚本：`test.mjs`（按钮位置）、`git-test.mjs`（P0 主流程）、`diff-test.mjs`（差异视图）、`p1-test.mjs`（分支/储藏）、`graph-model.test.mjs`（泳道布局纯函数，不需要浏览器）、`history-test.mjs`（历史泳道图）、`history-dark.mjs`（深色泳道配色）、`hunk-test.mjs`（hunk 级暂存）、`branch-test.mjs`（分支删除与合并）、`sync-test.mjs`（对本地裸仓库的 fetch/pull/push）、`conflict-test.mjs`（冲突逐区解决与中止）、`amend-test.mjs`（暂存全部并提交、改写上次提交）、`dark.mjs`（深色）、`contract.mjs`（契约漂移）、`locale-parity.mjs`（中英键一致）、`parity.mjs`（两个图标是否一致）、`pluginrow.mjs`（插件管理行图标）、`detail.mjs`（详情页插图）。截图输出到 `run/shots/`。
 
 ## 插件元数据
 
