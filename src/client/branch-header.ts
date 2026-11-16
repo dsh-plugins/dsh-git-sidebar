@@ -38,6 +38,17 @@ export interface BranchHeaderProps {
   /** Merge one local branch into the checked-out one. */
   mergeBranch(branch: string): void
   /**
+   * The branch the panel is showing the log of without checking it out, if any.
+   *
+   * A preview is a reading state, not a checkout: the header and the history
+   * describe this branch while the working tree and HEAD stay where they were.
+   */
+  readonly preview: string | null
+  /** Show one branch's history without moving the checkout. */
+  previewBranch(branch: string): void
+  /** Go back to describing the checkout. */
+  exitPreview(): void
+  /**
    * The repository picker, drawn where the header used to print the root path.
    *
    * The panel builds it because the scan belongs to the panel's Session; the
@@ -63,7 +74,7 @@ function mergeable(branches: BranchList | undefined): string[] {
 type Menu = 'none' | 'branch' | 'more'
 
 /** Width a menu reserves when it is placed, used to keep it inside the window. */
-const MENU_W = 200
+const MENU_W = 340
 
 /** The share of a DOM node the menu needs to place itself. */
 interface MenuAnchor {
@@ -133,11 +144,15 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
     }
     const detached = snapshot?.branch === null
     const usable = snapshot !== undefined && snapshot.kind === 'repository'
-    const label = !usable
-      ? ''
-      : snapshot.branch ?? snapshot.commit ?? t('branch.unknown')
+    const checkedOut = !usable ? null : snapshot.branch ?? snapshot.commit ?? t('branch.unknown')
+    const preview = usable ? props.preview : null
+    // A preview renames what the header and the log describe; the title and the
+    // bar under the row are what keep the real checkout visible beside it.
+    const label = !usable ? '' : preview ?? checkedOut ?? t('branch.unknown')
     const root = snapshot?.root
-    const upstream = usable ? snapshot.upstream ?? null : null
+    // The upstream counts belong to the checkout, so a preview hides them rather
+    // than pairing another branch's name with this one's numbers.
+    const upstream = usable && preview === null ? snapshot.upstream ?? null : null
     const operation = usable ? snapshot.operation ?? null : null
 
     const pick = (branch: string): void => {
@@ -168,12 +183,19 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
             'data-git-branch': '',
             'data-git-branch-button': '',
             'data-detached': detached ? '' : undefined,
+            'data-git-preview': preview === null ? undefined : '',
             'aria-haspopup': 'menu',
             'aria-expanded': menu === 'branch' ? 'true' : 'false',
-            title: root === undefined ? label : `${label}\n${root}`,
+            title: headerTitle(t, label, preview, checkedOut, root),
             onClick: (event: MenuClick) => { openMenu('branch', event.currentTarget) },
           },
           React.createElement('span', { className: `${PREFIX}-branch-name` }, label),
+          preview === null
+            ? null
+            : React.createElement('span', {
+              className: `${PREFIX}-preview-badge`,
+              'data-git-preview-badge': '',
+            }, t('branch.previewBadge')),
           Icon(React, 'chevron', { size: 14 })),
         upstreamSits(React, t, upstream),
         props.repo ?? null,
@@ -218,9 +240,75 @@ export function makeBranchHeader(React: ReactLike): (props: BranchHeaderProps) =
           props.mergeBranch(branch)
         }, menuAt) : null,
       ),
+      preview === null ? null : previewBar(React, t, preview, checkedOut, props.exitPreview),
       operation === null ? null : operationBar(React, t, operation, busy, props.abort),
     )
   }
+}
+
+/**
+ * The tooltip of the branch button, which has up to three facts to state.
+ *
+ * A preview is the case that needs all three: the branch the panel describes,
+ * the branch Git actually has checked out, and the checkout's path.
+ * @param t - the panel's translator.
+ * @param label - the name the button shows.
+ * @param preview - the previewed branch, or null when the header describes HEAD.
+ * @param checkedOut - the branch or commit HEAD names.
+ * @param root - the checkout's top level, when it has one.
+ * @returns the tooltip text.
+ */
+function headerTitle(
+  t: Translate,
+  label: string,
+  preview: string | null,
+  checkedOut: string | null,
+  root: string | undefined,
+): string {
+  const lines = [label]
+  if (preview !== null) lines.push(t('branch.previewHint', { current: checkedOut ?? '' }))
+  if (root !== undefined) lines.push(root)
+  return lines.join('\n')
+}
+
+/**
+ * The bar a preview shows under the header.
+ *
+ * The point of the bar is the contradiction a preview creates: the branch name
+ * and the log describe another branch, while everything that writes — staging,
+ * stashing, committing — still happens on the checkout. Saying so where the
+ * reader is looking beats leaving it to a tooltip.
+ * @param React - the loader's React.
+ * @param t - the panel's translator.
+ * @param preview - the branch being previewed.
+ * @param checkedOut - the branch or commit HEAD names.
+ * @param exit - the handler that goes back to describing the checkout.
+ * @returns the bar.
+ */
+function previewBar(
+  React: ReactLike,
+  t: Translate,
+  preview: string,
+  checkedOut: string | null,
+  exit: () => void,
+): unknown {
+  return React.createElement('div', {
+    className: `${PREFIX}-preview-bar`,
+    'data-git-preview-bar': preview,
+    role: 'status',
+  },
+  React.createElement('span', {
+    className: `${PREFIX}-preview-text`,
+    title: t('branch.previewBar', { branch: preview, current: checkedOut ?? '' }),
+  }, t('branch.previewBar', { branch: preview, current: checkedOut ?? '' })),
+  React.createElement('button', {
+    type: 'button',
+    className: `${PREFIX}-preview-exit`,
+    'data-git-preview-exit': '',
+    title: t('branch.previewExit'),
+    onClick: exit,
+  }, t('branch.previewExit')),
+  )
 }
 
 /** The `↑n ↓m` reading, or nothing when the branch tracks no upstream or has nothing to report. */
@@ -282,6 +370,7 @@ function picker(
   const { t } = props
   const current = branches?.current ?? null
   const local = branches?.local ?? []
+  const preview = props.preview
   return React.createElement('div', {
     className: `${PREFIX}-menu ${PREFIX}-branch-menu`,
     'data-git-branch-menu': '',
@@ -294,34 +383,26 @@ function picker(
     : local.length === 0
       ? React.createElement('p', { className: `${PREFIX}-menu-note`, role: 'status' }, t('branch.empty'))
       : React.createElement('ul', { className: `${PREFIX}-branch-list` },
-        ...local.map(name => React.createElement('li', { key: name, className: `${PREFIX}-branch-item` },
-          React.createElement('button', {
-            type: 'button',
-            className: `${PREFIX}-branch-option`,
-            'data-git-branch-option': name,
-            'data-current': name === current ? '' : undefined,
-            role: 'menuitemradio',
-            'aria-checked': name === current ? 'true' : 'false',
-            disabled: busy || name === current,
-            title: name,
-            onClick: () => { pick(name) },
-          },
-          name === current ? Icon(React, 'check', { size: 16 }) : React.createElement('span', {
-            className: `${PREFIX}-branch-space`,
-          }),
-          React.createElement('span', { className: `${PREFIX}-branch-option-name` }, name)),
-          // The checked-out branch has no delete control: Git refuses it, so
-          // offering the button would only produce a refusal.
-          name === current ? null : React.createElement('button', {
-            type: 'button',
-            className: `${PREFIX}-branch-delete`,
-            'data-git-branch-delete': name,
-            disabled: busy,
-            title: t('branch.delete'),
-            'aria-label': t('branch.delete'),
-            onClick: () => { props.deleteBranch(name) },
-          }, Icon(React, 'discard', { size: 16 })))),
+        ...local.map(name => branchRow(React, props, name, current, preview, busy, pick, (branch) => {
+          // The reader picked a branch to read, so the list has served its
+          // purpose: leaving it open would cover the log it just switched.
+          close()
+          props.previewBranch(branch)
+        })),
       ),
+  preview === null
+    ? null
+    : React.createElement('button', {
+      type: 'button',
+      className: `${PREFIX}-menu-item`,
+      'data-git-preview-clear': '',
+      role: 'menuitem',
+      title: t('branch.previewExit'),
+      onClick: () => {
+        close()
+        props.exitPreview()
+      },
+    }, Icon(React, 'eye'), React.createElement('span', null, t('branch.previewExit'))),
   React.createElement('div', { className: `${PREFIX}-new-branch` },
     React.createElement('input', {
       type: 'text',
@@ -352,6 +433,89 @@ function picker(
       onClick: create,
     }, t('branch.create'))),
   )
+}
+
+/**
+ * One branch in the picker: what it is called, and the two things to do with it.
+ *
+ * The name button checks the branch out, which is what the picker did before the
+ * preview existed; preview sits beside it as its own control, because changing
+ * what the panel describes must not be mistaken for changing the checkout.
+ * @param React - the loader's React.
+ * @param props - the header's callbacks.
+ * @param name - the branch.
+ * @param current - the checked-out branch, when Git reports one.
+ * @param preview - the branch the panel describes without checking it out.
+ * @param busy - whether a write is running.
+ * @param pick - the checkout handler.
+ * @returns the row.
+ */
+function branchRow(
+  React: ReactLike,
+  props: BranchHeaderProps,
+  name: string,
+  current: string | null,
+  preview: string | null,
+  busy: boolean,
+  pick: (branch: string) => void,
+  previewPick: (branch: string) => void,
+): unknown {
+  const { t } = props
+  const checkedOut = name === current
+  const previewing = name === preview
+  return React.createElement('li', {
+    key: name,
+    className: `${PREFIX}-branch-item`,
+    'data-current': checkedOut ? '' : undefined,
+    'data-previewed': previewing ? '' : undefined,
+  },
+  // One fixed slot for the mark, so every row starts its name at the same
+  // column whether it is the checkout, the preview, or neither.
+  React.createElement('span', { className: `${PREFIX}-branch-space` },
+    checkedOut
+      ? Icon(React, 'check', { size: 16 })
+      : previewing ? Icon(React, 'eye', { size: 16 }) : null),
+  // The name is a label, not a control: the row acts through the three buttons
+  // beside it, so a click on the text does nothing at all.
+  React.createElement('span', {
+    className: `${PREFIX}-branch-option-name`,
+    'data-git-branch-name': name,
+    title: name,
+  }, name),
+  React.createElement('button', {
+    type: 'button',
+    className: `${PREFIX}-branch-act`,
+    'data-act': 'checkout',
+    'data-git-branch-option': name,
+    'data-git-branch-checkout': name,
+    role: 'menuitem',
+    disabled: busy || checkedOut,
+    title: `${t('branch.checkout')} ${name}`,
+    onClick: () => { pick(name) },
+  }, t('branch.checkout')),
+  React.createElement('button', {
+    type: 'button',
+    className: `${PREFIX}-branch-act`,
+    'data-act': 'preview',
+    'data-git-branch-preview': name,
+    'data-active': previewing ? '' : undefined,
+    role: 'menuitem',
+    disabled: busy || checkedOut || previewing,
+    title: `${t('branch.preview')} ${name}`,
+    onClick: () => { previewPick(name) },
+  }, t('branch.preview')),
+  // The checked-out branch has no delete control: Git refuses it, so offering
+  // the button would only produce a refusal.
+  checkedOut ? null : React.createElement('button', {
+    type: 'button',
+    className: `${PREFIX}-branch-act`,
+    'data-act': 'delete',
+    'data-git-branch-delete': name,
+    role: 'menuitem',
+    disabled: busy,
+    title: t('branch.delete'),
+    onClick: () => { props.deleteBranch(name) },
+  }, t('branch.remove')))
 }
 
 /** The operations menu: fetch, pull, push, one stash, and merges. */

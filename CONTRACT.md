@@ -54,6 +54,24 @@ B 在 `src/client.ts` 里 import 这两个并按 `ctx.slots.register` 注册，�
 
 `WriteProblem` 在 P1 增加 `dirty`（有未提交改动，拒绝切换分支）、`invalid-name`、`exists`。
 
+### 分支预览：只读的「换一条分支看历史」
+
+`HistoryArgs` 多一个可选 `branch`：给了就读这个**本地分支**的日志，省略读 HEAD（旧客户端行为不变）。
+宿主用 `git rev-parse --verify --quiet refs/heads/<branch>^{commit}` 把它解析成完整对象名再喂给
+`git log` / `git rev-list --count`——前缀固定，所以分支名不可能被当成选项，也顺带证明该 ref 仍然存在；
+解析失败返回空页。**不新增 Remote 方法**，`run/contract.mjs` 无需改动。
+
+预览状态本身只在客户端（面板一次挂载内），不写任何会话缓存：预览的历史页既不读也不写
+`panel-cache` 的历史槽，退出预览即回到原 HEAD 缓存。历史列表按 `branch` 作为 `key` 重挂载，
+因为它的 `load` 闭包捕获首次渲染的 props，只有重挂载才能换 ref 并从第 0 页重读。
+
+预览时以下操作先弹确认框，确认后**先签出预览分支、成功再执行原操作**：历史行的「签出此提交」
+「从此提交新建分支」、操作菜单的「合并」「拉取」「推送」、「新建分支」、以及删除正在预览的分支
+（删除不签出——签出后 Git 会拒绝删除，改为删除成功后自动退出预览）。暂存/取消暂存/撤销/储藏/
+提交/中止操作**不拦截**：它们只动索引与工作区，而宿主的 `checkout` 在存在未提交改动时一律拒绝，
+拦截提交会让「预览时提交」变成永远不可能。面板在分支头下方用一条预览条说明这一切：
+预览只换了描述对象，改动与提交仍落在实际签出的分支上。
+
 ### 多仓库：选中状态在宿主
 
 `status`、`diff`、`stage`、`commit`、`history`、`branches`、`stashes`、`conflict`、`generateMessage` 都是

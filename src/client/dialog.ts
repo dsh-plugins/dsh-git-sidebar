@@ -214,6 +214,27 @@ export function askBranchName(t: Translate, short: string): Promise<string | nul
 }
 
 /**
+ * Ask before acting on a branch the panel is only previewing.
+ *
+ * A preview moves nothing: the branch name and the log change, the checkout does
+ * not. An operation that names the previewed branch therefore cannot run as it
+ * stands, so the question is the step that turns the preview into a real
+ * checkout — and the labels say so instead of asking a bare confirmation.
+ * @param t - the panel's translator.
+ * @param preview - the branch being previewed.
+ * @param current - the branch actually checked out, when Git reports one.
+ * @returns whether the reader agreed to check the previewed branch out.
+ */
+export function confirmPreviewCheckout(t: Translate, preview: string, current: string | null): Promise<boolean> {
+  return askConfirm({
+    title: t('dialog.previewCheckout.title'),
+    body: t('dialog.previewCheckout.body', { preview, current: current ?? '' }),
+    confirm: t('dialog.previewCheckout.confirm'),
+    cancel: t('dialog.cancel'),
+  })
+}
+
+/**
  * Report a refusal the reader asked for and Git declined.
  *
  * Switching branches over a dirty tree is the case this exists for: the request
@@ -227,6 +248,8 @@ export function notify(t: Translate, message: string): Promise<void> {
     title: t('dialog.refused.title'),
     body: message,
     confirm: t('dialog.ok'),
-    cancel: t('dialog.ok'),
+    // A notice has one answer, so the second button is left out entirely rather
+    // than repeating the same word twice.
+    cancel: '',
   })
 }

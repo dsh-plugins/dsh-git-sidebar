@@ -31,6 +31,10 @@ export interface DialogAsk {
   /** Ask for a line of text instead of a yes or no. */
   readonly input?: string
   readonly confirm: string
+  /**
+   * The dismissing button's label. Empty draws no second button, which is what a
+   * notice — a question with one answer — wants.
+   */
   readonly cancel: string
 }
 
@@ -197,12 +201,14 @@ export function makeDialogHost(React: ReactLike): () => unknown {
           autoFocus: !typed,
           onClick: confirm,
         }, ask.confirm),
-        React.createElement('button', {
-          type: 'button',
-          className: `${PREFIX}-dialog-cancel`,
-          'data-git-dialog-cancel': '',
-          onClick: cancel,
-        }, ask.cancel))),
+        ask.cancel === ''
+          ? null
+          : React.createElement('button', {
+            type: 'button',
+            className: `${PREFIX}-dialog-cancel`,
+            'data-git-dialog-cancel': '',
+            onClick: cancel,
+          }, ask.cancel))),
     )
   }
 }

@@ -197,11 +197,13 @@ export class GitSidebarService extends TypertRemoteService {
   async history(args?: HistoryArgs): Promise<HistoryPage> {
     const target = this.targetOf(args?.sessionId)
     if (target === undefined) return { commits: [], hasMore: false, total: 0 }
+    const branch = typeof args?.branch === 'string' ? args.branch.trim() : ''
     try {
       return await readHistory(this.home, this.config, target.session, target.base, {
         sessionId: target.session.id,
         limit: typeof args?.limit === 'number' ? args.limit : 20,
         skip: typeof args?.skip === 'number' ? args.skip : 0,
+        ...branch.length === 0 ? {} : { branch },
       }, this.signalOf())
     } catch {
       return { commits: [], hasMore: false, total: 0 }

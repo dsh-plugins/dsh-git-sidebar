@@ -298,6 +298,15 @@ export interface HistoryArgs {
   readonly limit: number
   /** Commits to skip, for the next page. */
   readonly skip: number
+  /**
+   * Read the log of this local branch instead of the checked-out one.
+   *
+   * The panel's preview state is the only caller: browsing another branch's
+   * history must not move the checkout, so the log is read from the ref the
+   * reader is looking at while HEAD stays where it is. Absent reads HEAD, which
+   * is what a client without preview sends.
+   */
+  readonly branch?: string
 }
 
 /** The commit history page, and whether more commits follow it. */

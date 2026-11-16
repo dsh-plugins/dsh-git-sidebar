@@ -130,7 +130,12 @@ export function gitSidebarContribution(zod: ZodLike): RemoteContribution {
         stageAll: zod.boolean().optional(),
         paths: strings().optional(),
       })),
-      descriptor('history', () => ({ sessionId: zod.string(), limit: zod.number(), skip: zod.number() })),
+      descriptor('history', () => ({
+        sessionId: zod.string(),
+        limit: zod.number(),
+        skip: zod.number(),
+        branch: zod.string().optional(),
+      })),
       descriptor('commitDetail', () => ({ sessionId: zod.string(), sha: zod.string() })),
       descriptor('branches', () => ({ sessionId: zod.string() })),
       descriptor('checkout', () => ({ sessionId: zod.string(), branch: zod.string() })),

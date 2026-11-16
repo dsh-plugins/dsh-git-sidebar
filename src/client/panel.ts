@@ -28,7 +28,7 @@ import { makeRepoBar } from './repo-picker.ts'
 import { CommitBox } from './commit-box.ts'
 import {
   askBranchName, confirmAbort, confirmDeleteBranch, confirmDetach, confirmDiscard, confirmForceDelete,
-  confirmMerge, confirmSync, notify,
+  confirmMerge, confirmPreviewCheckout, confirmSync, notify,
 } from './dialog.ts'
 import { HISTORY_CHROME_H, makeHistory, ROW_H } from './history.ts'
 import { Icon } from './icons.ts'
@@ -157,7 +157,7 @@ interface SessionCalls {
   stashApply(index: number, drop: boolean): Promise<WriteOutcome>
   stashDrop(index: number): Promise<WriteOutcome>
   sync(action: SyncAction): Promise<WriteOutcome>
-  history(limit: number, skip: number): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean; total: number }>
+  history(limit: number, skip: number, branch?: string): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean; total: number }>
   repositories(): Promise<RepositoryList>
   selectRepository(root?: string): Promise<SelectOutcome>
 }
@@ -220,6 +220,10 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     // from the row selection: selecting says what a group action acts on, ticking
     // says what the commit holds.
     const [picked, setPicked] = React.useState<readonly string[]>([])
+    // The branch the header and the history describe without checking it out.
+    // A preview is a reading state: it moves no ref, and every write still lands
+    // on the checkout the bar under the header names.
+    const [preview, setPreview] = React.useState<string | null>(null)
     // Which read the first paint came from, which is what a test can observe
     // without counting requests: `hit` means the cache answered.
     const [cacheState] = React.useState<'hit' | 'miss'>(cachedStatus === undefined ? 'miss' : 'hit')
@@ -310,8 +314,8 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       stashDrop: index => runtime.api.ready.then(api => api.stashDrop(sessionId, index)),
       sync: action => runtime.api.ready.then(api => api.sync(sessionId, action)),
       generateMessage: staged => runtime.api.ready.then(api => api.generateMessage(sessionId, staged)),
-      history: (limit, skip) => runtime.api.ready
-        .then(api => api.history(sessionId, limit, skip))
+      history: (limit, skip, branch) => runtime.api.ready
+        .then(api => api.history(sessionId, limit, skip, branch))
         .catch(() => EMPTY_PAGE),
       repositories: () => runtime.api.ready
         .then(api => api.repositories(sessionId))
@@ -327,8 +331,13 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * The page a reader already saw is the page they expect to see again, and a
      * commit invalidates it explicitly, so nothing here has to guess when the
      * log moved.
+     *
+     * A preview reads past the cache on purpose: the page belongs to a ref the
+     * reader is only looking at, and storing it under the Session would make the
+     * checkout's own first page wrong as soon as the preview ends.
      */
     const readHistory = (limit: number, skip: number): Promise<{ commits: readonly CommitEntry[]; hasMore: boolean; total: number }> => {
+      if (preview !== null) return calls.history(limit, skip, preview)
       const cached = cache.history.get(sessionId)
       if (cached !== undefined && skip === 0) return Promise.resolve(cached)
       return calls.history(limit, skip).then((page) => {
@@ -368,11 +377,14 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * @param effect - what else the write left stale: the log's newest rows, the
      * stash list, or neither. The snapshot never needs this, because every
      * success already carries the new one.
+     * @param after - what follows a success, such as the action a confirmed
+     * preview checkout was asked for.
      */
     const write = (
       action: () => Promise<WriteOutcome>,
       failure: string,
       effect: 'log' | 'stashes' | 'both' | undefined = undefined,
+      after?: () => void,
     ): void => {
       setNotice('')
       setBusy(true)
@@ -387,6 +399,7 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
             setSnapshot(outcome.snapshot)
             if (effect === 'stashes' || effect === 'both') loadStashes(true)
             if (effect === 'log' || effect === 'both') dropHistory()
+            after?.()
             return
           }
           const text = refusalText(t, outcome.problem, outcome.message, failure)
@@ -420,6 +433,63 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     }
 
     /**
+     * Describe another branch without moving the checkout.
+     *
+     * Only the header and the history change: the working tree, the index, the
+     * stashes and the commit box still belong to the checkout, which is what the
+     * bar under the header states.
+     * @param branch - the local branch to read.
+     */
+    const previewBranch = (branch: string): void => {
+      setNotice('')
+      setPreview(branch)
+      setConflict(null)
+      clearSelection()
+    }
+
+    /** Go back to describing the checkout; the cached page brings it back. */
+    const exitPreview = (): void => {
+      setNotice('')
+      setPreview(null)
+    }
+
+    /**
+     * Check a branch out, then run what asked for the checkout.
+     *
+     * A confirmed preview stops describing another branch and starts describing
+     * the checkout, so the preview is cleared here rather than in every caller.
+     * @param branch - the branch to check out.
+     * @param then - what to run once the checkout landed; skipped on refusal.
+     */
+    const checkoutAndThen = (branch: string, then?: () => void): void => {
+      write(() => calls.checkout(branch), t('notice.checkoutFailed'), 'log', () => {
+        setPreview(null)
+        then?.()
+      })
+    }
+
+    /**
+     * Run one action that belongs to the branch being previewed.
+     *
+     * A preview moves nothing, so an action that acts on the previewed branch
+     * cannot run as it stands: the reader is asked, and a confirmed answer checks
+     * the branch out before the action runs. Without a preview the action is
+     * simply run.
+     * @param action - what to do once the branch is the checkout.
+     */
+    const onPreviewed = (action: () => void): void => {
+      const branch = preview
+      if (branch === null) {
+        action()
+        return
+      }
+      void confirmPreviewCheckout(t, branch, current().branch ?? null).then((agreed) => {
+        if (!agreed) return
+        checkoutAndThen(branch, action)
+      })
+    }
+
+    /**
      * Read another checkout of the Session's directory tree.
      *
      * Everything the panel remembers belongs to the checkout it was read from, so
@@ -445,6 +515,8 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
         setStashes([])
         rememberStashes(cache, sessionId, [])
         setConflict(null)
+        // A preview names a branch of the checkout just left, so it goes too.
+        setPreview(null)
         clearSelection()
         setPicked([])
         runtime.clearDiffCache?.()
@@ -507,10 +579,14 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     }
 
     const checkout = (branch: string): void => {
-      write(() => calls.checkout(branch), t('notice.checkoutFailed'), 'log')
+      checkoutAndThen(branch)
     }
     const createBranch = (name: string): void => {
-      write(() => calls.createBranch(name), t('notice.createBranchFailed'), 'log')
+      // A new branch is created and checked out, so a preview has to become the
+      // checkout first for the name to mean what the header shows.
+      onPreviewed(() => {
+        write(() => calls.createBranch(name), t('notice.createBranchFailed'), 'log', () => { setPreview(null) })
+      })
     }
 
     /**
@@ -522,9 +598,11 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * @param sha - the commit to check out.
      */
     const checkoutCommit = (sha: string): void => {
-      void confirmDetach(t, sha.slice(0, 7)).then((agreed) => {
-        if (!agreed) return
-        write(() => calls.checkout(sha), t('notice.checkoutFailed'), 'log')
+      onPreviewed(() => {
+        void confirmDetach(t, sha.slice(0, 7)).then((agreed) => {
+          if (!agreed) return
+          write(() => calls.checkout(sha), t('notice.checkoutFailed'), 'log')
+        })
       })
     }
 
@@ -537,9 +615,13 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * @param sha - the commit the branch starts at.
      */
     const branchFromCommit = (sha: string): void => {
-      void askBranchName(t, sha.slice(0, 7)).then((name) => {
-        if (name === null) return
-        write(() => calls.createBranch(name, sha), t('notice.createBranchFailed'), 'log')
+      onPreviewed(() => {
+        void askBranchName(t, sha.slice(0, 7)).then((name) => {
+          if (name === null) return
+          write(() => calls.createBranch(name, sha), t('notice.createBranchFailed'), 'log', () => {
+            setPreview(null)
+          })
+        })
       })
     }
 
@@ -587,9 +669,18 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
     }
 
     const sync = (action: SyncAction): void => {
-      void (action === 'fetch'
-        ? Promise.resolve(true)
-        : confirmSync(t, action, current().upstream?.name ?? null)).then((agreed) => {
+      if (action === 'fetch') {
+        runSync(action)
+        return
+      }
+      // A pull and a push act on the checked-out branch, so a preview has to
+      // become the checkout first. The preview question already names the
+      // operation, so the remote is not asked about twice for one gesture.
+      if (preview !== null) {
+        onPreviewed(() => { runSync(action) })
+        return
+      }
+      void confirmSync(t, action, current().upstream?.name ?? null).then((agreed) => {
         if (!agreed) return
         runSync(action)
       })
@@ -688,6 +779,8 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
             setBusy(false)
             rememberStatus(cache, sessionId, outcome.snapshot)
             setSnapshot(outcome.snapshot)
+            // A deleted branch cannot stay previewed: the log it named is gone.
+            if (branch === preview) setPreview(null)
             dropHistory()
             return
           }
@@ -710,11 +803,22 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
 
     /** Merge one branch; a conflict leaves the merge in progress for the conflict view. */
     const merge = (branch: string): void => {
+      if (preview !== null) {
+        // The preview question already names the merge, so the merge question is
+        // skipped rather than asked twice for one gesture.
+        onPreviewed(() => { mergeInto(branch) })
+        return
+      }
       void confirmMerge(t, branch, current().branch ?? null).then((agreed) => {
         if (!agreed) return
-        write(() => runtime.api.ready.then(api => api.mergeBranch(sessionId, branch)),
-          t('notice.mergeFailed'), 'log')
+        mergeInto(branch)
       })
+    }
+
+    /** The merge the questions guard. */
+    const mergeInto = (branch: string): void => {
+      write(() => runtime.api.ready.then(api => api.mergeBranch(sessionId, branch)),
+        t('notice.mergeFailed'), 'log')
     }
 
     /**
@@ -1004,6 +1108,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       abort: abortOperation,
       deleteBranch,
       mergeBranch: merge,
+      preview,
+      previewBranch,
+      exitPreview,
       repo: React.createElement(RepoBar, {
         root: snapshot?.root,
         loading,
@@ -1068,6 +1175,10 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
      * they used last time, and the history page already carries it.
      */
     const historyElement = (): unknown => React.createElement(History, {
+      // A preview changes the ref the list reads, and the list's own reads close
+      // over the props of the mount that made them, so the branch is part of the
+      // identity: a new preview gets a component that reads from zero.
+      key: preview ?? 'head',
       open: historyOpen,
       t,
       load: readHistory,
@@ -1076,6 +1187,9 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       // that happened, so the revision is only what the head shows: the list
       // itself reads from the cache until a write invalidates it.
       revision: historyRevision,
+      // The branch the list is showing when it is not the checkout, so the head
+      // can say whose log this is.
+      branch: preview,
       // The history's own title button and the region's head fold the same
       // state, so the two can never disagree about whether the list is open.
       onToggle: () => { togglePane('history') },
@@ -1083,12 +1197,15 @@ export function makePanel(React: ReactLike, runtime: PanelRuntime): (props: TabB
       // graph can ask for a new snapshot without scrolling back up.
       onRefresh: refresh,
       // The cached page this Session already read: a reopened tab draws these
-      // rows on its first render instead of asking the Host again.
-      initial: cache.history.get(sessionId),
-      remember: (page: { commits: readonly CommitEntry[]; hasMore: boolean; total: number }) => {
-        appendHistory(cache, sessionId, page)
-        setRecent(subjectsOf(page))
-      },
+      // rows on its first render instead of asking the Host again. A preview
+      // reads past the cache, so it neither seeds nor fills it.
+      initial: preview === null ? cache.history.get(sessionId) : undefined,
+      remember: preview === null
+        ? (page: { commits: readonly CommitEntry[]; hasMore: boolean; total: number }) => {
+          appendHistory(cache, sessionId, page)
+          setRecent(subjectsOf(page))
+        }
+        : undefined,
       onCheckout: checkoutCommit,
       onBranchFrom: branchFromCommit,
       onCopy: copyCommit,

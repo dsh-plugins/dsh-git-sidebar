@@ -979,8 +979,54 @@ export const PANEL_STYLES = `
   white-space: nowrap;
 }
 
+/* The preview: a branch the panel describes without checking it out. */
+
+.gs-preview-badge {
+  flex: none;
+  padding: 0 5px;
+  color: var(--dsw-alias-brand-primary);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
+  border-radius: var(--dsw-radius-xs);
+}
+
+.gs-preview-bar {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 8px 3px 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 8%, transparent);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.gs-preview-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-preview-exit {
+  flex: none;
+  padding: 1px 6px;
+  color: var(--dsw-alias-brand-primary);
+  font: inherit;
+  font-size: 11px;
+  background: transparent;
+  border: 0.5px solid var(--dsw-alias-brand-primary);
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+
 .gs-branch-btn:focus-visible,
-.gs-branch-option:focus-visible,
+.gs-branch-act:focus-visible,
+.gs-preview-exit:focus-visible,
 .gs-repo:focus-visible,
 .gs-repo-option:focus-visible,
 .gs-menu-item:focus-visible,
@@ -1074,10 +1120,11 @@ export const PANEL_STYLES = `
 .gs-branch-menu {
   /*
    * The picker is placed under the branch button by measurement, so it keeps
-   * the shared menu width: stretching it edge to edge was what the absolute
-   * positioning needed, and that is gone.
+   * the shared menu width. It is wider than the other menus because a row holds
+   * a branch name and three text buttons.
    */
-  min-width: 220px;
+  min-width: 300px;
+  max-width: min(380px, calc(100vw - 24px));
 }
 
 .gs-menu-title {
@@ -1109,10 +1156,11 @@ export const PANEL_STYLES = `
 
 .gs-branch-option {
   display: flex;
+  flex: 1 1 auto;
   gap: 6px;
   align-items: center;
   box-sizing: border-box;
-  width: 100%;
+  min-width: 0;
   min-height: 28px;
   padding: 3px 8px 3px 4px;
   color: inherit;
@@ -1130,15 +1178,69 @@ export const PANEL_STYLES = `
 }
 
 .gs-branch-option-name {
+  flex: 1 1 auto;
   min-width: 0;
+  padding: 0 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  border-radius: var(--dsw-radius-xs);
 }
 
 .gs-branch-space {
   flex: none;
   width: 16px;
+}
+
+/* One branch row: its name, then the three text buttons that act on it. */
+
+.gs-branch-item {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+  min-height: 28px;
+  padding-inline: 4px;
+  border-radius: var(--dsw-radius-xs);
+}
+
+.gs-branch-item[data-current] .gs-branch-option-name {
+  color: var(--dsw-alias-brand-primary);
+  font-weight: 600;
+}
+
+.gs-branch-item[data-previewed] {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
+}
+
+/* The row's three actions read as one family, so the eye can compare them. */
+.gs-branch-act {
+  flex: none;
+  padding: 1px 6px;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  background: transparent;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+}
+
+.gs-branch-act[data-act='preview'][data-active] {
+  color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.gs-branch-act[data-act='delete'] {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.gs-branch-act:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  border-color: var(--dsw-alias-border-l3);
+  cursor: default;
 }
 
 .gs-new-branch {
@@ -1274,6 +1376,21 @@ export const PANEL_STYLES = `
   line-height: 16px;
   text-align: center;
   background: color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent);
+  border-radius: var(--dsw-radius-xs);
+}
+
+/* The branch a previewed log belongs to, named beside the history title. */
+.gs-history-branch {
+  flex: none;
+  max-width: 40%;
+  padding: 0 5px;
+  overflow: hidden;
+  color: var(--dsw-alias-brand-primary);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0.5px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent);
   border-radius: var(--dsw-radius-xs);
 }
 
@@ -1725,8 +1842,22 @@ export const PANEL_STYLES = `
   .gs-branch-btn:hover:not(:disabled),
   .gs-history-title:hover,
   .gs-menu-item:hover:not(:disabled),
-  .gs-branch-option:hover:not(:disabled),
+  .gs-branch-item:hover .gs-branch-option-name,
   .gs-history-more:hover:not(:disabled) {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+
+  .gs-branch-act:hover:not(:disabled) {
+    color: var(--dsw-alias-brand-primary);
+    border-color: var(--dsw-alias-brand-primary);
+  }
+
+  .gs-branch-act[data-act='delete']:hover:not(:disabled) {
+    color: var(--dsw-alias-state-error-primary);
+    border-color: var(--dsw-alias-state-error-primary);
+  }
+
+  .gs-preview-exit:hover {
     background: var(--dsw-alias-interactive-bg-hover);
   }
 
@@ -1739,16 +1870,20 @@ export const PANEL_STYLES = `
   .gs-commit-menu-item:hover {
     background: var(--dsw-alias-interactive-bg-hover);
   }
-
-  .gs-branch-option[data-current]:hover:not(:disabled) {
-    background: transparent;
-  }
 }
 
 @media (pointer: coarse) {
-  .gs-menu-item,
-  .gs-branch-option {
+  .gs-menu-item {
     min-height: 40px;
+  }
+
+  .gs-branch-item {
+    min-height: 40px;
+  }
+
+  .gs-branch-act,
+  .gs-preview-exit {
+    min-height: 26px;
   }
 }
 /* The conflict view: two sides per region, each with a choice. */

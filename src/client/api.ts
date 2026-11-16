@@ -144,6 +144,8 @@ export interface GitSidebarRemote {
     readonly sessionId: string
     readonly limit: number
     readonly skip: number
+    /** Read this local branch's log instead of the checked-out one. */
+    readonly branch?: string
   }): Promise<RemoteResult<HistoryPage>>
   commitDetail(args: CommitDetailArgs): Promise<RemoteResult<DiffPayload>>
   branches(args: { readonly sessionId: string }): Promise<RemoteResult<BranchList>>
@@ -206,7 +208,12 @@ export interface GitSidebarApi {
     options?: { amend?: boolean; stageAll?: boolean; paths?: readonly string[] },
   ): Promise<CommitOutcome>
   requestDiff(args: DiffArgs, signal?: AbortSignal): Promise<DiffPayload>
-  history(sessionId: string, limit: number, skip: number): Promise<HistoryPage>
+  history(
+    sessionId: string,
+    limit: number,
+    skip: number,
+    branch?: string,
+  ): Promise<HistoryPage>
   requestCommit(args: CommitDetailArgs, signal?: AbortSignal): Promise<DiffPayload>
   branches(sessionId: string): Promise<BranchList>
   checkout(sessionId: string, branch: string): Promise<WriteOutcome>
@@ -345,9 +352,10 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
         return { kind: 'error', message: messageOf(error) }
       }
     },
-    async history(sessionId: string, limit: number, skip: number): Promise<HistoryPage> {
+    async history(sessionId: string, limit: number, skip: number, branch?: string): Promise<HistoryPage> {
       try {
-        const result = await remote.history({ sessionId, limit, skip })
+        const args = branch === undefined ? { sessionId, limit, skip } : { sessionId, limit, skip, branch }
+        const result = await remote.history(args)
         if (result.ok) return result.value
         return { commits: [], hasMore: false, total: 0 }
       } catch {

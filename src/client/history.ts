@@ -101,6 +101,13 @@ export interface HistoryProps {
   readonly tab: TabInfo['tab'] | undefined
   /** Changes whenever the newest commit might have changed, which re-reads the first page. */
   readonly revision: string
+  /**
+   * The branch whose log the list is showing, when it is not the checkout.
+   *
+   * The panel's preview sets it, and the head prints it so a reader can tell the
+   * graph apart from the one their checkout has.
+   */
+  readonly branch?: string | null
   onToggle(): void
   /** Re-read the panel's snapshot; absent when the panel offers no refresh. */
   onRefresh?(): void
@@ -253,6 +260,16 @@ export function makeHistory(React: ReactLike): (props: HistoryProps) => unknown 
       },
       Icon(React, open ? 'expand' : 'chevron', { size: 16 }),
       React.createElement('h3', { className: `${PREFIX}-group-title` }, t('history.title'))),
+      // The branch a previewed log belongs to sits beside the toggle rather than
+      // inside it: the title is one button, and a badge nested in it would be
+      // read as part of the control's own label.
+      props.branch === undefined || props.branch === null
+        ? null
+        : React.createElement('span', {
+          className: `${PREFIX}-history-branch`,
+          'data-git-history-branch': props.branch,
+          title: t('history.previewBranch', { branch: props.branch }),
+        }, props.branch),
       commits.length === 0
         ? null
         : React.createElement('span', { className: `${PREFIX}-history-count` },

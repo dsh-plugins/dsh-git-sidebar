@@ -51,20 +51,48 @@ export async function readHistory(
   const limit = clamp(Math.trunc(args.limit), 1, MAX_HISTORY)
   const skip = Number.isFinite(args.skip) && args.skip > 0 ? Math.trunc(args.skip) : 0
   const git = gitIn(ctx, config, session, await topLevel(gitIn(ctx, config, session, directory, signal)), signal)
+  const revision = await historyRevision(git, args.branch)
+  if (revision === undefined) return { commits: [], hasMore: false, total: 0 }
   const format = `--format=%H${FIELD}%h${FIELD}%s${FIELD}%an${FIELD}%ae${FIELD}%aI${FIELD}%P${FIELD}%D${RECORD}`
   // `--topo-order` is what the lane layout needs: date order interleaves
   // branches, so a parent whose child has not been drawn yet opens a lane of its
   // own and the graph fans out into one lane per commit. Topological order keeps
   // every branch together, which is the order the graph was modelled on.
-  const log = await git('log', ['log', '--topo-order', `--max-count=${limit + 1}`, `--skip=${skip}`, format])
+  const log = await git('log', ['log', '--topo-order', `--max-count=${limit + 1}`, `--skip=${skip}`, format, revision])
   const records = log.stdout.split(RECORD).filter(record => record.trim().length > 0)
   const hasMore = records.length > limit
   const commits = records.slice(0, limit).map(parseCommit)
   // The header names how long the history is, not how much of it has been read,
   // so the count comes from Git. A repository with no commits reports zero.
-  const counted = await git('rev-list', ['rev-list', '--count', 'HEAD'], [0, 128])
+  const counted = await git('rev-list', ['rev-list', '--count', revision], [0, 128])
   const parsed = counted.exitCode === 0 ? Number.parseInt(counted.stdout.trim(), 10) : 0
   return { commits, hasMore, total: Number.isFinite(parsed) ? parsed : 0 }
+}
+
+/**
+ * Resolve the commit the log is read from: the previewed local branch, or HEAD.
+ *
+ * The branch name is only ever appended to `refs/heads/`, which both keeps a
+ * name from being read as an option and restricts preview to local branches —
+ * the only kind the picker lists. Asking Git to resolve it also proves the ref
+ * still exists, so a branch deleted while it was being previewed reads as an
+ * empty page instead of Git's error.
+ * @param git - runner bound to the repository root.
+ * @param branch - the previewed branch, or undefined to read HEAD.
+ * @returns a full object name, or undefined when the branch no longer resolves.
+ */
+async function historyRevision(git: Awaited<ReturnType<typeof gitIn>>, branch: string | undefined): Promise<string | undefined> {
+  const name = typeof branch === 'string' ? branch.trim() : ''
+  if (name.length === 0) return 'HEAD'
+  const resolved = await git(
+    'rev-parse',
+    ['rev-parse', '--verify', '--quiet', `refs/heads/${name}^{commit}`],
+    [0, 1, 128],
+  )
+  if (resolved.exitCode !== 0) return undefined
+  const object = parseName(resolved.stdout)
+  if (object === null) return undefined
+  return /^[0-9a-f]{7,64}$/i.test(object) ? object : undefined
 }
 
 /**
