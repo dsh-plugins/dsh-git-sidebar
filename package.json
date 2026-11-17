@@ -44,7 +44,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.1.0",
-    "@dsh-plugin/dsh-monaco": "^0.1.0"
+    "@dsh-plugin/dsh-monaco": ">=0.1.0-0"
   },
   "peerDependenciesMeta": {
     "@dsh-plugin/dsh-monaco": {
