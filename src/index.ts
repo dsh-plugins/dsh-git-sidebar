@@ -19,7 +19,7 @@ import { createGitTools } from './host/tools.ts'
 export const name = '@dsh-plugin/dsh-git-sidebar'
 
 /** Services required before the endpoints can run. */
-export const inject = ['subprocess', 'sandbox', 'sandboxPolicy', 'workingDirectory', 'sessions', 'llm']
+export const inject = ['subprocess', 'sandbox', 'sandboxPolicy', 'workingDirectory', 'sessions', 'fs', 'llm']
 
 /** Instruction the model follows when wording a commit message. */
 const DEFAULT_DRAFT_PROMPT = [
@@ -41,6 +41,8 @@ export const Config = z.object({
   graceMs: z.number().min(0).max(30000).default(2000).description('Termination grace for each process.'),
   maxDiffBytes: z.number().min(65536).max(16777216).default(1048576)
     .description('Largest patch the diff viewer renders before truncating.'),
+  maxSideBytes: z.number().min(65536).max(33554432).default(2097152)
+    .description('Largest text one side of a diff editor comparison may carry; a larger side is refused, never cut.'),
   draftProvider: z.string().description('LLM provider for the commit-message draft; pair with draftModel.'),
   draftModel: z.string().description('Exact model id for the draft; pair with draftProvider.'),
   draftPrompt: z.string().default(DEFAULT_DRAFT_PROMPT).description('Instruction the model follows.'),
@@ -67,6 +69,7 @@ export type GitSidebarConfig = {
   maxOutputBytes: number
   graceMs: number
   maxDiffBytes: number
+  maxSideBytes: number
   draftProvider?: string
   draftModel?: string
   draftPrompt: string

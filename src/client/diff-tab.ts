@@ -1,6 +1,5 @@
 /**
- * The diff viewer tab: one file's changes or one commit's patch, drawn from the
- * payload the Host already parsed.
+ * The diff viewer tab: one file's changes or one commit's patch.
  *
  * Registration follows the ordinary two-stage path a tab type uses: the
  * definition goes into `sidebarRightTabs`, the body into the keyed
@@ -8,6 +7,15 @@
  * entry, so it never appears on the Start page; it claims this package's
  * resource scheme instead, which is what gives each file and each commit its own
  * tab.
+ *
+ * Two renderings of the same payload live here. The textual one draws the
+ * hunks the Host parsed, and is the only one available when dsh-monaco is not
+ * installed. The editor one hands the Host's two whole documents to the Monaco
+ * diff view (`diff-monaco.ts`), which is what gives syntax colouring, a
+ * side-by-side layout when the tab is wide enough, and per-block stage/unstage/
+ * rollback actions anchored at the hunk the payload named. A commit's patch
+ * spans files, so with the editor it becomes a file picker over one pair of
+ * documents at a time (`diff-commit.ts`).
  *
  * React and the Remote are not this module's to own. The client entry supplies
  * React from the module table, and the readers and copy either as factory
@@ -25,10 +33,19 @@
  * know the target of a later navigation.
  */
 
-import type { CommitDetailArgs, DiffArgs, DiffHunk, DiffPayload, HunkArgs, WriteOutcome } from '../shared.ts'
+import type {
+  CommitDetailArgs, CommitFilesPayload, CommitSidesArgs, DiffArgs, DiffHunk, DiffPayload, DiffSides, HunkArgs,
+  WriteOutcome,
+} from '../shared.ts'
 import {
   DIFF_ADDRESS_PREFIX, DIFF_TAB_ID, DIFF_TAB_KIND, parseCommitDiffAddress, parseDiffAddress,
 } from '../shared.ts'
+import { clearDiffCache } from './diff-cache.ts'
+import { bytesOf, makeCommitDiffBody } from './diff-commit.ts'
+import {
+  makeMonacoDiffView, useMonacoApiState,
+  type MonacoApiLike, type MonacoEditorFace, type MonacoDiffProps, type MonacoReactSurface,
+} from './diff-monaco.ts'
 import { basenameOf, toRows, type DiffRow } from './diff-parse.ts'
 import { hunkButtons, type DiffSide, type HunkControls } from './hunk-controls.ts'
 
@@ -40,10 +57,8 @@ import { hunkButtons, type DiffSide, type HunkControls } from './hunk-controls.t
  * reject the caller's value even though the loader's React is the real one. The
  * cast happens once, here.
  */
-export interface DiffReactSurface {
-  createElement(type: unknown, props?: unknown, ...children: unknown[]): unknown
-  useState<T>(initial: T): [T, (value: T | ((previous: T) => T)) => void]
-  useEffect(effect: () => (() => void) | void, deps: readonly unknown[]): void
+export interface DiffReactSurface extends MonacoReactSurface {
+  useCallback<T>(callback: T, dependencies: readonly unknown[]): T
 }
 
 /** The tab type declaration the Sidebar registers; `guide` stays unset on purpose. */
@@ -86,12 +101,33 @@ export interface DiffRuntime {
    */
   requestCommit?: (args: CommitDetailArgs, signal?: AbortSignal) => Promise<DiffPayload>
   /**
+   * Read both sides of one file's change, for the diff editor.
+   *
+   * Only the editor rendering uses this; the textual one draws the patch alone.
+   */
+  requestSides?: (args: DiffArgs, signal?: AbortSignal) => Promise<DiffSides>
+  /** Read the files one commit changes, for the editor's file picker. */
+  requestCommitFiles?: (args: CommitDetailArgs, signal?: AbortSignal) => Promise<CommitFilesPayload>
+  /** Read both sides of one file inside one commit. */
+  requestCommitSides?: (args: CommitSidesArgs, signal?: AbortSignal) => Promise<DiffSides>
+  /**
    * Move one hunk into or out of the index.
    *
    * The viewer supplies this only when the tab names a file side of the index; a
    * commit's diff has no index to move a block of history into.
    */
   moveHunk?: (args: HunkArgs, direction: 'stage' | 'unstage') => Promise<WriteOutcome>
+  /** Roll one hunk of the working tree back out of the file. */
+  discardHunk?: (args: HunkArgs) => Promise<WriteOutcome>
+  /**
+   * The Monaco editor service dsh-monaco provides, resolved lazily.
+   *
+   * Read per mount rather than captured once, because the service is published
+   * by another plugin and must not become a load-order dependency of this one.
+   */
+  editor?: () => MonacoEditorFace | undefined
+  /** Subscribe to appearance changes, so the editor's code font follows the settings. */
+  onThemeChange?: (listener: () => void) => () => void
   /** Translate one copy key of {@link DIFF_DICTS}. */
   t?: (key: string) => string
   /** True once the entry injected {@link DIFF_STYLES} through `ctx.effect`, so the body need not. */
@@ -108,8 +144,12 @@ export interface DiffBodyProps {
   requestDiff?: DiffRuntime['requestDiff']
   /** Commit reader injected through the seat's `inject` callback, if the entry chose that path. */
   requestCommit?: DiffRuntime['requestCommit']
+  /** Two-sides reader injected through the seat's `inject` callback, if the entry chose that path. */
+  requestSides?: DiffRuntime['requestSides']
   /** Hunk mover injected through the seat's `inject` callback, if the entry chose that path. */
   moveHunk?: DiffRuntime['moveHunk']
+  /** Hunk rollback injected through the seat's `inject` callback, if the entry chose that path. */
+  discardHunk?: DiffRuntime['discardHunk']
   /** Copy injected through the seat's `inject` callback, if the entry registered a locale. */
   t?: (key: string) => string
 }
@@ -152,8 +192,14 @@ export const DIFF_DICTS: DiffDictionaries = {
     'commitUnavailable': '这个提交的差异暂不可用',
     'unknownTarget': '这个差异标签页没有对应到文件或提交',
     'unavailable': '差异服务不可用',
+    'commit.files': '文件',
+    'commit.merge': '合并提交：逐文件比较的是第一父提交',
+    'editor.label': '差异编辑器',
+    'editor.tooLarge': '文件过大，差异编辑器显示不了，已退回补丁视图',
+    'editor.unavailable': '差异编辑器不可用，已退回补丁视图',
     'hunk.stage': '暂存此块',
     'hunk.unstage': '取消暂存此块',
+    'hunk.discard': '回滚此块（撤销工作区里的这部分改动）',
   },
   en: {
     'title': 'Diff',
@@ -168,8 +214,14 @@ export const DIFF_DICTS: DiffDictionaries = {
     'commitUnavailable': 'This commit’s diff is unavailable',
     'unknownTarget': 'This diff tab names no file or commit',
     'unavailable': 'The diff service is unavailable',
+    'commit.files': 'Files',
+    'commit.merge': 'Merge commit: files are compared against the first parent',
+    'editor.label': 'Diff editor',
+    'editor.tooLarge': 'The file is too large for the diff editor; showing the patch instead',
+    'editor.unavailable': 'The diff editor is unavailable; showing the patch instead',
     'hunk.stage': 'Stage this block',
     'hunk.unstage': 'Unstage this block',
+    'hunk.discard': 'Roll this block back out of the working tree',
   },
 }
 
@@ -181,10 +233,15 @@ type DiffTarget =
 /** Characters of a commit name a chip shows. */
 const SHORT_SHA = 7
 
-/** What the body is showing: a request in flight, a payload, or a rejection. */
+/** What the body is showing: a request in flight, a payload with its editor sides, or a rejection. */
 type ViewState =
   | { readonly status: 'loading' }
-  | { readonly status: 'ready'; readonly payload: DiffPayload }
+  | {
+    readonly status: 'ready'
+    readonly payload: DiffPayload
+    /** The two whole documents, when the editor rendering asked for them. */
+    readonly sides?: DiffSides
+  }
   | { readonly status: 'failed'; readonly message: string }
 
 /** Class prefix of every element and rule this module owns. */
@@ -212,14 +269,69 @@ export const DIFF_TAB_DEFINITION: DiffTabDefinition = {
   },
 }
 
+/** Everything one render of the pane's content needs. */
+interface ContentOptions {
+  readonly MonacoDiff: (props: MonacoDiffProps) => unknown
+  readonly api: MonacoApiLike | undefined
+  readonly target: DiffTarget | undefined
+  readonly state: ViewState
+  readonly missingReader: boolean
+  readonly controls?: HunkControls
+  /** Bumped after every block write, so the rows rebuild around the new patch. */
+  readonly revision: number
+  readonly side: DiffSide
+  readonly t: (key: string) => string
+  readonly onThemeChange?: (listener: () => void) => () => void
+}
+
 /**
  * Build the body the Sidebar registers under {@link DIFF_TAB_ID}.
  * @param React - the loader's React.
- * @param runtime - the Remote call, copy, and style status; injected props win over it.
+ * @param runtime - the Remote readers, copy, the editor service, and style status; injected props win over it.
  * @returns a component taking the slot framework's props.
  */
 export function makeDiffBody(React: unknown, runtime?: DiffRuntime): (props: unknown) => unknown {
   const R = React as DiffReactSurface
+  const MonacoDiff = makeMonacoDiffView(React, PREFIX)
+  const CommitBody = runtime?.requestCommitFiles === undefined || runtime.requestCommitSides === undefined
+    ? undefined
+    : makeCommitDiffBody(React, {
+      requestFiles: runtime.requestCommitFiles,
+      requestSides: runtime.requestCommitSides,
+      diffView: props => MonacoDiff(props),
+      resolveApi,
+      t: translator(runtime?.t),
+      ...runtime.onThemeChange === undefined ? {} : { onThemeChange: runtime.onThemeChange },
+    })
+
+  /**
+   * Resolve the editor namespace once, reporting why it is not there.
+   *
+   * Everything about the editor rendering hangs off this: without a namespace
+   * the tab draws the patch, and a missing or failed service is one line in the
+   * console rather than a broken tab.
+   * @returns the Monaco namespace, or undefined when the editor cannot be used.
+   */
+  async function resolveApi(): Promise<MonacoApiLike | undefined> {
+    const service = runtime?.editor?.()
+    if (service === undefined) return undefined
+    if (service.version !== 1) {
+      console.warn('git-sidebar: the Monaco editor service is version %s, not 1; diffs stay textual', service.version)
+      return undefined
+    }
+    try {
+      await service.ready
+    } catch (error) {
+      console.warn('git-sidebar: the Monaco editor failed to load (%s); diffs stay textual', messageOf(error))
+      return undefined
+    }
+    const api = service.monaco
+    if (api === undefined) {
+      console.warn('git-sidebar: the Monaco editor reported readiness without a namespace; diffs stay textual')
+      return undefined
+    }
+    return api
+  }
 
   /** The pane: one request per target, cancelled when the tab navigates or leaves. */
   function DiffPanel(props: DiffBodyProps): unknown {
@@ -230,10 +342,21 @@ export function makeDiffBody(React: unknown, runtime?: DiffRuntime): (props: unk
     const sessionId = props.sessionId
     const requestDiff = props.requestDiff ?? runtime?.requestDiff
     const requestCommit = props.requestCommit ?? runtime?.requestCommit
+    const requestSides = props.requestSides ?? runtime?.requestSides
+    const discardHunk = props.discardHunk ?? runtime?.discardHunk
     const t = translator(props.t ?? runtime?.t)
+    const service = runtime?.editor?.()
+    const editorExpected = service !== undefined && service.version === 1
+    const apiState = useMonacoApiState(R, resolveApi)
+    const api = apiState.status === 'ready' ? apiState.api : undefined
+    const editorFailed = editorExpected && apiState.status === 'failed'
+    // While the namespace loads the tab already behaves as if the editor were
+    // there, so the documents arrive beside it instead of after it.
+    const useEditor = editorExpected && !editorFailed
     const [state, setState] = R.useState<ViewState>({ status: 'loading' })
     const [moving, setMoving] = R.useState<number | null>(null)
     const [moveNotice, setMoveNotice] = R.useState('')
+    const [revisionTick, setRevisionTick] = R.useState(0)
     const moveHunk = props.moveHunk ?? runtime?.moveHunk
     // A hunk is only movable on a file side of the index: a commit is history.
     const side: DiffSide = target === undefined || target.kind === 'commit'
@@ -245,12 +368,23 @@ export function makeDiffBody(React: unknown, runtime?: DiffRuntime): (props: unk
     const key = target === undefined ? '' : targetKey(target)
     // A commit is read by its own endpoint and a file by the file endpoint, so a
     // missing reader is a wiring fact about one target, not about the pane.
-    const missingReader = target !== undefined
-      && (target.kind === 'commit' ? requestCommit === undefined : requestDiff === undefined)
+    const reader = target === undefined
+      ? undefined
+      : target.kind === 'commit' ? requestCommit : requestDiff
+    const missingReader = target !== undefined && reader === undefined
+    // A commit whose files the editor lists is not read as a patch at all, so a
+    // large commit does not pay for a patch nobody draws.
+    const commitEditor = CommitBody !== undefined && target?.kind === 'commit' && useEditor
+    const readable = target !== undefined && !commitEditor
+    // The two whole documents are only asked for when the editor can draw them.
+    const wantsSides = target?.kind === 'file' && requestSides !== undefined && useEditor
 
     R.useEffect((): (() => void) | void => {
-      if (sessionId === undefined || target === undefined || missingReader) return
+      if (sessionId === undefined || target === undefined || missingReader || !readable) return
       const controller = new AbortController()
+      const sidesPending = wantsSides && requestSides !== undefined && target.kind === 'file'
+        ? requestSides({ sessionId, path: target.path, staged: target.staged }, controller.signal)
+        : undefined
       // Narrowed one branch at a time, so each reader keeps its own argument type.
       let pending: Promise<DiffPayload>
       if (target.kind === 'commit') {
@@ -267,53 +401,106 @@ export function makeDiffBody(React: unknown, runtime?: DiffRuntime): (props: unk
       setState({ status: 'loading' })
       // Both readers fold their own failures into a payload, so what reaches the
       // rejection arm is a fault the caller could not turn into a value at all.
-      void pending.then(
-        (payload) => { if (live) setState({ status: 'ready', payload }) },
-        (error: unknown) => { if (live) setState({ status: 'failed', message: messageOf(error) }) },
-      )
+      void pending.then(async (payload) => {
+        // A patch with no hunks has nothing to compare: two identical documents
+        // would only say so less clearly than the empty-diff note.
+        const sides = sidesPending === undefined || payload.kind !== 'text' || payload.hunks.length === 0
+          ? undefined
+          : await sidesPending
+        if (!live) return
+        setState({ status: 'ready', payload, ...sides === undefined ? {} : { sides } })
+      }, (error: unknown) => { if (live) setState({ status: 'failed', message: messageOf(error) }) })
       return () => {
         live = false
         outer?.removeEventListener('abort', stop)
         controller.abort()
       }
-    }, [address, key, sessionId, requestDiff, requestCommit, revision, missingReader])
-
-    const truncated = state.status === 'ready' && state.payload.kind === 'text'
-      && state.payload.truncated === true
-    // Reading again after a move is what shows the hunk on its new side; the
-    // key change re-runs the effect below.
-    const [revisionTick, setRevisionTick] = R.useState(0)
-    const controls = moveHunk === undefined || target === undefined || target.kind === 'commit' || sessionId === undefined
-      ? undefined
-      : {
+    }, [address, key, sessionId, requestDiff, requestCommit, requestSides, revision, revisionTick, missingReader,
+      readable, wantsSides])    // Reading again after a move is what shows the hunk on its new side. A
+    // write to the index or working tree makes every cached patch a statement
+    // about a tree that no longer exists, so the whole cache goes: the staged
+    // view of this same file is stale too.
+    const settled = (outcome: WriteOutcome): void => {
+      setMoving(null)
+      if (!outcome.ok) {
+        // A refused move is the whole reason the reader pressed: stating it
+        // beside the patch beats leaving the hunk where it was in silence.
+        setMoveNotice(outcome.message)
+        return
+      }
+      setMoveNotice('')
+      clearDiffCache()
+      setRevisionTick(tick => tick + 1)
+    }
+    /** A call that never reached a verdict: the reader still pressed a button. */
+    const refused = (error: unknown): void => {
+      setMoving(null)
+      setMoveNotice(messageOf(error))
+    }
+    const moveable = (moveHunk !== undefined || discardHunk !== undefined)
+      && target?.kind === 'file' && sessionId !== undefined
+    const controls: HunkControls | undefined = moveable
+      ? {
         side,
         busy: moving !== null,
         t,
-        move: (index: number, direction: 'stage' | 'unstage'): void => {
-          setMoving(index)
+        move: (hunk, region, direction) => {
+          if (moveHunk === undefined || target?.kind !== 'file' || sessionId === undefined) return
+          setMoving(hunk)
           void moveHunk({
             sessionId,
-            path: (target as { path: string }).path,
-            hunk: index,
-          }, direction).then((outcome) => {
-            setMoving(null)
-            if (outcome.ok) {
-              setMoveNotice('')
-              setRevisionTick((tick) => tick + 1)
-              return
-            }
-            // A refused move is the whole reason the reader pressed: stating it
-            // beside the patch beats leaving the hunk where it was in silence.
-            setMoveNotice(outcome.message)
-          })
+            path: target.path,
+            hunk,
+            ...region === undefined ? {} : { region },
+          }, direction).then(settled, refused)
+        },
+        ...discardHunk === undefined ? {} : {
+          discard: (hunk: number, region: number | undefined) => {
+            if (target?.kind !== 'file' || sessionId === undefined) return
+            setMoving(hunk)
+            void discardHunk({
+              sessionId,
+              path: target.path,
+              hunk,
+              ...region === undefined ? {} : { region },
+            }).then(settled, refused)
+          },
         },
       }
+      : undefined
+
+    if (commitEditor && target?.kind === 'commit') {
+      return R.createElement(CommitBody, {
+        ...sessionId === undefined ? {} : { sessionId },
+        sha: target.sha,
+        revision,
+        ...info?.tab.signal === undefined ? {} : { signal: info.tab.signal },
+        t,
+      })
+    }
+    const truncated = state.status === 'ready' && state.payload.kind === 'text'
+      && state.payload.truncated === true
+    const fallback = state.status === 'ready' ? fallbackNote(t, state.sides) : undefined
+    const failedEditor = editorFailed ? t('editor.unavailable') : undefined
     return R.createElement('div', { className: PREFIX, ...identityOf(target) },
       runtime?.stylesInstalled === true ? null : styleElement(R),
       head(R, t, target, state),
       moveNotice === '' ? null : banner(R, moveNotice),
       truncated ? banner(R, t('truncated')) : null,
-      content(R, t, target, state, missingReader, controls, revisionTick),
+      failedEditor === undefined ? null : banner(R, failedEditor),
+      fallback === undefined ? null : banner(R, fallback),
+      content(R, {
+        MonacoDiff,
+        api,
+        target,
+        state,
+        missingReader,
+        ...controls === undefined ? {} : { controls },
+        revision: revisionTick,
+        side,
+        t,
+        ...runtime?.onThemeChange === undefined ? {} : { onThemeChange: runtime.onThemeChange },
+      }),
     )
   }
 
@@ -389,16 +576,9 @@ function head(
   )
 }
 
-/** The scrolling body: rows, a note, or the skeleton while the request runs. */
-function content(
-  React: DiffReactSurface,
-  t: (key: string) => string,
-  target: DiffTarget | undefined,
-  state: ViewState,
-  missingReader: boolean,
-  controls?: HunkControls,
-  revision = 0,
-): unknown {
+/** The scrolling body: the diff editor, rows, a note, or the skeleton while the request runs. */
+function content(React: DiffReactSurface, options: ContentOptions): unknown {
+  const { target, state, t, missingReader } = options
   if (target === undefined) return note(React, t('unknownTarget'))
   if (missingReader) {
     return note(React, t(target.kind === 'commit' ? 'commitUnavailable' : 'unavailable'))
@@ -412,22 +592,71 @@ function content(
     return note(React, t('binary'), target.kind === 'file' ? target.path : target.sha)
   }
   if (payload.hunks.length === 0) return note(React, t('empty'))
-  const rows = toRows(payload.hunks)
+  const edited = montage(React, options, payload)
+  if (edited !== undefined) return edited
+  return rows(React, payload.hunks, options.controls, options.revision)
+}
+
+/**
+ * Draw the two whole documents in the Monaco diff editor when it can.
+ * @param React - the loader's React.
+ * @param options - the target, the state, and the editor namespace.
+ * @param payload - the textual payload, whose hunks anchor the actions.
+ * @returns the editor element, or undefined when the textual view has to draw.
+ */
+function montage(React: DiffReactSurface, options: ContentOptions, payload: DiffPayload): unknown {
+  const { api, target, state, controls, side, t } = options
+  if (api === undefined || state.status !== 'ready' || target?.kind !== 'file') return undefined
+  const sides = state.sides
+  if (sides === undefined || sides.kind !== 'text' || payload.kind !== 'text') return undefined
+  const editor: MonacoDiffProps = {
+    api,
+    path: target.path,
+    oldText: sides.oldText,
+    newText: sides.newText,
+    hunks: payload.hunks,
+    side,
+    busy: controls?.busy === true,
+    t,
+    move: (hunk, region, direction) => { controls?.move(hunk, region, direction) },
+    ...controls?.discard === undefined ? {} : { discard: controls.discard },
+    ...options.onThemeChange === undefined ? {} : { onThemeChange: options.onThemeChange },
+  }
+  // Rendered as an element, never called: the view is a component and its hooks
+  // belong to its own fiber, not to this pane's render.
+  return React.createElement(options.MonacoDiff, editor)
+}
+
+/**
+ * Draw the patch as numbered rows, which is the whole rendering without an editor.
+ * @param React - the loader's React.
+ * @param hunks - the Host's hunks.
+ * @param controls - the actions a hunk header carries, when the side has any.
+ * @param revision - bumped after each block write, so the rows rebuild.
+ * @returns the scrolling rows.
+ */
+function rows(
+  React: DiffReactSurface,
+  hunks: readonly DiffHunk[],
+  controls: HunkControls | undefined,
+  revision: number,
+): unknown {
+  const drawn = toRows(hunks)
   // A hunk index counts `@@` blocks, not rows: the counter advances only on a
   // hunk header, so the button a reader sees carries the position the Host
   // expects.
   let hunk = -1
   return React.createElement('div', { className: `${PREFIX}-body`, 'data-git-diff-revision': String(revision) },
     React.createElement('div', { className: `${PREFIX}-rows` },
-      ...rows.map((row, index) => {
+      ...drawn.map((row, index) => {
         if (row.kind === 'hunk-header') hunk += 1
-        return drawn(React, row, index, row.kind === 'hunk-header' ? hunkButtons(React, controls, hunk, PREFIX) : null)
+        return drawnRow(React, row, index, row.kind === 'hunk-header' ? hunkButtons(React, controls, hunk, PREFIX) : null)
       })),
   )
 }
 
 /** One drawn row: its two numbers, its sign, and its text. */
-function drawn(React: DiffReactSurface, row: DiffRow, key: number, extra?: unknown): unknown {
+function drawnRow(React: DiffReactSurface, row: DiffRow, key: number, extra?: unknown): unknown {
   if (row.kind === 'file') {
     return React.createElement('div', {
       key,
@@ -470,7 +699,20 @@ function note(React: DiffReactSurface, message: string, detail?: string): unknow
   )
 }
 
-/** The bar above the rows when the Host cut the diff short. */
+/**
+ * Say why the editor gave way to the patch view.
+ * @param t - copy lookup.
+ * @param sides - what the Host answered for the two documents, if it was asked.
+ * @returns the sentence to show above the rows, or undefined when nothing gave way.
+ */
+function fallbackNote(t: (key: string) => string, sides: DiffSides | undefined): string | undefined {
+  if (sides === undefined || sides.kind === 'text') return undefined
+  if (sides.kind === 'too-large') return `${t('editor.tooLarge')} (${bytesOf(sides.bytes)})`
+  const reason = sides.kind === 'error' ? sides.message : ''
+  return reason === '' ? t('editor.unavailable') : `${t('editor.unavailable')}: ${reason}`
+}
+
+/** The bar above the rows when the Host cut the diff short, or a read refused. */
 function banner(React: DiffReactSurface, text: string): unknown {
   return React.createElement('p', { className: `${PREFIX}-truncated`, role: 'status' }, text)
 }
@@ -597,7 +839,7 @@ function translator(t: ((key: string) => string) | undefined): (key: string) => 
   }
 }
 
-/** The body's rules: only `--dsw-*` tokens, monospace for the patch itself. */
+/** The body's rules: only `--dsw-*` / `--dsh-*` tokens, monospace for the patch itself. */
 export const DIFF_STYLES = `
 .${PREFIX} {
   display: flex;
@@ -647,6 +889,91 @@ export const DIFF_STYLES = `
 }
 .${PREFIX}-down {
   color: var(--dsw-alias-state-error-primary);
+}
+.${PREFIX}-files {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 4px 12px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+.${PREFIX}-files-label {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+.${PREFIX}-files-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 6px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+  font-family: var(--dsh-font-family-code, ui-monospace, monospace);
+  font-size: var(--dsh-code-font-size, 11px);
+}
+.${PREFIX}-monaco {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.${PREFIX}-monaco-actions {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+.${PREFIX}-monaco-block {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 16px;
+  pointer-events: none;
+}
+.${PREFIX}-monaco-rule {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 7px;
+  width: 1px;
+  background: var(--dsw-alias-border-l2);
+}
+.${PREFIX}-monaco-stack {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.${PREFIX}-monaco-action {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.${PREFIX}-monaco-action:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.${PREFIX}-monaco-action:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
 }
 .${PREFIX}-body {
   flex: 1 1 auto;

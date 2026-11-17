@@ -18,12 +18,16 @@
  * each stylesheet is injected as a `<style>` element the plugin's effect owns.
  */
 
-import type { CommitDetailArgs, DiffArgs, DiffPayload } from './shared.ts'
+import type {
+  CommitDetailArgs, CommitFilesPayload, CommitSidesArgs, DiffArgs, DiffPayload, DiffSides,
+} from './shared.ts'
 import { commitDiffAddress, DIFF_TAB_ID, diffAddress, GIT_TOOL_NAMES, PANEL_TAB_ID, PANEL_TAB_KIND } from './shared.ts'
 import {
   mountGitRemote, resolveZod, type GitClientContext, type GitRemoteHandle, type ReactLike, type TabBodyProps,
+  messageOf,
 } from './client/api.ts'
 import { DIFF_DICTS, DIFF_LOCALE_NS, DIFF_STYLES, DIFF_TAB_DEFINITION, makeDiffBody } from './client/diff-tab.ts'
+import type { MonacoEditorFace } from './client/diff-monaco.ts'
 import { GitGuideIcon } from './client/icons.ts'
 import { makePanel } from './client/panel.ts'
 import { createPanelCache, invalidateAll } from './client/panel-cache.ts'
@@ -494,6 +498,78 @@ function commitReader(remote: GitRemoteHandle): (args: CommitDetailArgs) => Prom
   }
 }
 
+/**
+ * Read one file's two whole documents for the diff editor.
+ *
+ * Nothing is cached: the working-tree side is the file on disk, and a tab left
+ * open across an edit elsewhere must read what is there now.
+ * @param remote - the mounted namespace.
+ * @returns the reader the editor rendering is given.
+ */
+function sidesReader(remote: GitRemoteHandle): (args: DiffArgs) => Promise<DiffSides> {
+  return args => remote.ready
+    .then(api => api.requestSides(args))
+    .catch((error: unknown) => ({ kind: 'error', message: messageOf(error) }))
+}
+
+/**
+ * Read the files one commit changes, for the editor's picker.
+ * @param remote - the mounted namespace.
+ * @returns the reader the commit body is given.
+ */
+function commitFilesReader(remote: GitRemoteHandle): (args: CommitDetailArgs) => Promise<CommitFilesPayload> {
+  return args => remote.ready
+    .then(api => api.requestCommitFiles(args))
+    .catch((error: unknown) => ({ kind: 'error', message: messageOf(error) }))
+}
+
+/**
+ * Read both sides of one file inside one commit.
+ * @param remote - the mounted namespace.
+ * @returns the reader the commit body is given for the picked file.
+ */
+function commitSidesReader(remote: GitRemoteHandle): (args: CommitSidesArgs) => Promise<DiffSides> {
+  return args => remote.ready
+    .then(api => api.requestCommitSides(args))
+    .catch((error: unknown) => ({ kind: 'error', message: messageOf(error) }))
+}
+
+/**
+ * Read the service dsh-monaco publishes, when it is there.
+ *
+ * The service belongs to another plugin, so its absence is the ordinary case
+ * (the tab then draws the patch) and an incompatible shape is stated once
+ * rather than retried on every render.
+ * @param ctx - the bundle's context.
+ * @returns a getter the diff body calls per mount.
+ */
+function editorService(ctx: GitClientContext): () => MonacoEditorFace | undefined {
+  let warned = false
+  const report = (reason: string): undefined => {
+    if (warned) return undefined
+    warned = true
+    console.warn('git-sidebar: %s; diffs stay textual', reason)
+    return undefined
+  }
+  return () => {
+    let service: unknown
+    try {
+      service = ctx.get('monacoEditor')
+    } catch (error) {
+      return report(`the monacoEditor service could not be read (${error instanceof Error ? error.message : String(error)})`)
+    }
+    if (service === undefined) return undefined
+    if (typeof service !== 'object' || service === null) {
+      return report('the monacoEditor service is not an object')
+    }
+    const candidate = service as { readonly version?: unknown; readonly ready?: unknown }
+    if (typeof candidate.version !== 'number' || typeof candidate.ready !== 'object') {
+      return report('the monacoEditor service does not match version 1')
+    }
+    return candidate as unknown as MonacoEditorFace
+  }
+}
+
 loader.load({
   id: SOURCE,
   factory(requireModule) {
@@ -558,12 +634,20 @@ loader.load({
 
         // The diff viewer: the same two-stage path under its own id. Its body
         // is built with the loader's React and reads a file, or a commit's own
-        // patch, through the same Remote namespace.
+        // patch, through the same Remote namespace. The editor half is wired
+        // only to readers it may call: dsh-monaco's service is read lazily, and
+        // without it the body stays on the textual rendering.
         const DiffBody = makeDiffBody(React, {
           requestDiff: diffReader(remote),
           requestCommit: commitReader(remote),
+          requestSides: sidesReader(remote),
+          requestCommitFiles: commitFilesReader(remote),
+          requestCommitSides: commitSidesReader(remote),
           moveHunk: (args, direction) => remote.ready.then(api =>
             direction === 'unstage' ? api.unstageHunk(args) : api.stageHunk(args)),
+          discardHunk: args => remote.ready.then(api => api.discardHunk(args)),
+          editor: editorService(ctx),
+          onThemeChange: listener => ctx.on('theme/change', () => { listener() }),
           t: ctx.locale.bind(DIFF_LOCALE_NS),
           stylesInstalled: true,
         })

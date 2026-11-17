@@ -49,8 +49,29 @@ B 在 `src/client.ts` 里 import 这两个并按 `ctx.slots.register` 注册，�
 | `sync` | `SyncArgs` | `WriteOutcome` | P1 |
 | `repositories` | `RepositoriesArgs` | `RepositoryList` | 多仓库 |
 | `selectRepository` | `SelectRepositoryArgs` | `SelectOutcome` | 多仓库 |
+| `fileSides` | `FileSidesArgs` | `DiffSides` | Monaco 差异 |
+| `commitFiles` | `CommitDetailArgs` | `CommitFilesPayload` | Monaco 差异 |
+| `commitSides` | `CommitSidesArgs` | `DiffSides` | Monaco 差异 |
+| `stageHunk` / `unstageHunk` / `discardHunk` | `HunkArgs`（可选 `region`） | `WriteOutcome` | 块级 / hunk 级写入 |
 
 全部类型定义见 `src/shared.ts`。**字段名以该文件为准，不要另起名字。**
+
+### Monaco 差异（可选依赖）
+
+dsh-monaco 声明为 `peerDependenciesMeta` 里的 **optional peerDependency**，不写进客户端 `inject`：
+服务用 `ctx.get('monacoEditor')` 惰性读取，读不到就继续用补丁块渲染，装与不装都不影响面板。
+宿主半为此新增三个读取端点：`fileSides`（工作区/索引一侧的两份完整文本，工作区那侧走 `ctx.fs`，
+对象那侧走 `git show`）、`commitFiles`（`diff-tree` 的名字状态 + numstat）、`commitSides`
+（提交内单个文件的父/子版本）。三个端点都受配置 `maxSideBytes` 约束，超过就返回 `too-large`
+而不是截断——半份文档会比对出另一份差异。合并提交没有唯一的旧侧：`commitFiles` / `commitSides`
+统一按 `git diff <第一父> <提交>` 读取（根提交仍走 `diff-tree --root`），并在 payload 的 `merge`
+里标记，客户端据此在页头说明。
+
+块级写入用 `HunkArgs.region`：Git 会把相邻改动并成一个 hunk，编辑器再按上下文把它拆回连续改动块
+（`src/host/patch.ts` 的 `regionPatch` 重建零上下文补丁，`@@ -a,b +c,d @@` 单侧为 0 时起点前移一行，
+交给 `git apply --unidiff-zero` 回放）；不带 `region` 时仍是整 hunk 的老路径。客户端 `blocksOf()`
+（`diff-monaco.ts`）必须与该函数用同一套切分规则，否则按钮会指向邻块。`discardHunk` 与 `stageHunk`
+对称：重读工作区补丁、取出该块、反向应用到工作区文件（`git apply -R`，不加 `--cached`）。
 
 `WriteProblem` 在 P1 增加 `dirty`（有未提交改动，拒绝切换分支）、`invalid-name`、`exists`。
 
@@ -142,7 +163,7 @@ Object.defineProperty(GitSidebarService.prototype, REMOTE_METHOD_DESCRIPTOR, {
 
 `REMOTE_METHODS` 从 `src/remote-descriptor.ts` 导入，保证与客户端一致。
 
-- **`inject` 实际为 `['subprocess', 'sandbox', 'sandboxPolicy', 'workingDirectory', 'sessions']`**：服务用 `ctx.sessions.get(sessionId)` 把 wire 上的会话 id 解析成 Session，不需要 `ctx.fs`。
+- **`inject` 实际为 `['subprocess', 'sandbox', 'sandboxPolicy', 'workingDirectory', 'sessions', 'fs', 'llm']`**：服务用 `ctx.sessions.get(sessionId)` 把 wire 上的会话 id 解析成 Session；`ctx.fs` 只用来读工作区那一侧的差异文本。
 
 - 会话与目录：`ctx.workingDirectory.get(session)` 取 cwd；会话不存在时返回 `kind: 'unavailable', problem: 'no-directory'`。
 - 沙箱：`const policy = ctx.sandboxPolicy.resolve({ session })`；`policy.mode === 'danger-full-access'` 时直接用 argv，否则先 `await ctx.sandbox.confine(command, { ...policy, mode: policy.mode }, signal)` 取 `.argv`。
@@ -155,8 +176,9 @@ Object.defineProperty(GitSidebarService.prototype, REMOTE_METHOD_DESCRIPTOR, {
 
 - `ctx.remote.$mount(gitSidebarContribution(zod))` → `ctx.get('remote.gitSidebar')`。
 - 所有可见文字走 `ctx.locale`，命名空间 `gitSidebar`。
-- 样式只用 `--dsw-*` 令牌，全部写在 `src/client/styles.ts`，以 `<style>` 元素或 `style` 属性注入，**不要**引入任何 Harness Client 包作为模块。
+- 样式只用 `--dsw-*` 令牌，全部写在 `src/client/styles.ts`（diff 视图在 `diff-tab.ts` 的 `DIFF_STYLES`），以 `<style>` 元素或 `style` 属性注入，**不要**引入任何 Harness Client 包作为模块。
 - 图标用内联 SVG path（Material Symbols 的 path 数据），20×20，`currentColor`。
+- Monaco 差异：`diff-tab.ts` 负责取数与回退，`diff-monaco.ts` 只负责编辑器与块按钮，`diff-commit.ts` 负责提交的文件选择。`ctx.monacoEditor` 是另一个插件的服务，只在组件挂载时经 `resolveApi()` 解析一次，**不得**写进 `inject`。
 
 ## 颜色语义（参照 Monokai Pro，落地到令牌）
 

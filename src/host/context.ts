@@ -126,6 +126,49 @@ export interface SessionStoreService {
   get(id: string): HostSession | undefined
 }
 
+/** A resolved file or directory. The key is opaque to this bundle. */
+export interface FileTarget {
+  readonly targetKey: string
+  readonly displayPath: string
+}
+
+/** What one `stat` reports: the entry kind and, for a file, its size. */
+export interface FileInfo {
+  readonly type: 'file' | 'directory' | 'other'
+  readonly size?: number
+}
+
+/**
+ * The filesystem seam the diff reader uses for the working-tree side.
+ *
+ * Git can hand over the index and committed blobs, but the working tree is a
+ * file on disk: reading it through the provider keeps the path resolution, the
+ * UTF-8 decoding, and the absent-target case in the platform's own hands.
+ */
+export interface FileService {
+  /**
+   * Resolve a path into a target the provider's reads accept.
+   * @param path - absolute path, or one relative to `cwd`.
+   * @param options - cwd override and cancellation.
+   * @returns the stable target.
+   */
+  resolve(path: string, options?: { readonly cwd?: string; readonly signal?: AbortSignal }): Promise<FileTarget>
+  /**
+   * Read target metadata.
+   * @param target - the resolved target.
+   * @param signal - cancellation of the metadata round-trip.
+   * @returns the metadata, or undefined when the target does not exist.
+   */
+  stat(target: FileTarget, signal?: AbortSignal): Promise<FileInfo | undefined>
+  /**
+   * Read a regular text file whole.
+   * @param target - the resolved target.
+   * @param signal - cancellation of the read.
+   * @returns the decoded content.
+   */
+  readText(target: FileTarget, signal?: AbortSignal): Promise<string>
+}
+
 /** The share of the tool registry this bundle registers into. */
 export interface ToolsService {
   /**
@@ -144,6 +187,8 @@ export interface HostContext {
   readonly sandboxPolicy: SandboxPolicyService
   readonly workingDirectory: WorkingDirectoryService
   readonly sessions: SessionStoreService
+  /** Reads the working-tree side of a file diff. */
+  readonly fs: FileService
   /**
    * Run a registration against services that may not exist in every profile.
    *

@@ -12,9 +12,9 @@
  */
 
 import type {
-  BranchList, CommitDetailArgs, CommitOutcome, ConflictChoice, ConflictContent, DiffArgs, DiffPayload, HistoryPage, HunkArgs,
-  MessageDraft, RepositoriesArgs, RepositoryList, SelectOutcome, SelectRepositoryArgs, SnapshotProblem, StashEntry,
-  StatusSnapshot, SyncAction, WriteOutcome,
+  BranchList, CommitDetailArgs, CommitFilesPayload, CommitOutcome, CommitSidesArgs, ConflictChoice, ConflictContent,
+  DiffArgs, DiffPayload, DiffSides, HistoryPage, HunkArgs, MessageDraft, RepositoriesArgs, RepositoryList,
+  SelectOutcome, SelectRepositoryArgs, SnapshotProblem, StashEntry, StatusSnapshot, SyncAction, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_NAMESPACE } from '../shared.ts'
 import { gitSidebarContribution, type RemoteContribution, type ZodLike } from '../remote-descriptor.ts'
@@ -29,6 +29,7 @@ export interface ReactLike {
   useId?(): string
   useState<T>(initial: T): [T, (value: T | ((previous: T) => T)) => void]
   useEffect(effect: () => (() => void) | void, dependencies: readonly unknown[]): void
+  useRef<T>(initial: T): { current: T }
   useCallback<T>(callback: T, dependencies: readonly unknown[]): T
 }
 
@@ -109,6 +110,8 @@ export interface GitClientContext {
     $mount(contribution: RemoteContribution): Promise<() => Promise<void>>
   }
   get(name: string): unknown
+  /** Subscribe to one platform event; the returned function unsubscribes. */
+  on(name: string, listener: () => void): () => void
 }
 
 /** One endpoint's failure branch, as the Remote carrier reports it. */
@@ -126,6 +129,10 @@ export type RemoteResult<T> =
 export interface GitSidebarRemote {
   status(args: { readonly sessionId: string }): Promise<RemoteResult<StatusSnapshot>>
   diff(args: DiffArgs): Promise<RemoteResult<DiffPayload>>
+  fileSides(args: DiffArgs): Promise<RemoteResult<DiffSides>>
+  commitFiles(args: CommitDetailArgs): Promise<RemoteResult<CommitFilesPayload>>
+  commitSides(args: CommitSidesArgs): Promise<RemoteResult<DiffSides>>
+  discardHunk(args: HunkArgs): Promise<RemoteResult<WriteOutcome>>
   stage(args: { readonly sessionId: string; readonly paths: readonly string[] }): Promise<RemoteResult<WriteOutcome>>
   unstage(args: { readonly sessionId: string; readonly paths: readonly string[] }): Promise<RemoteResult<WriteOutcome>>
   discard(args: {
@@ -208,6 +215,10 @@ export interface GitSidebarApi {
     options?: { amend?: boolean; stageAll?: boolean; paths?: readonly string[] },
   ): Promise<CommitOutcome>
   requestDiff(args: DiffArgs, signal?: AbortSignal): Promise<DiffPayload>
+  requestSides(args: DiffArgs, signal?: AbortSignal): Promise<DiffSides>
+  requestCommitFiles(args: CommitDetailArgs, signal?: AbortSignal): Promise<CommitFilesPayload>
+  requestCommitSides(args: CommitSidesArgs, signal?: AbortSignal): Promise<DiffSides>
+  discardHunk(args: HunkArgs): Promise<WriteOutcome>
   history(
     sessionId: string,
     limit: number,
@@ -351,6 +362,39 @@ function createApi(remote: GitSidebarRemote): GitSidebarApi {
       } catch (error) {
         return { kind: 'error', message: messageOf(error) }
       }
+    },
+    async requestSides(args: DiffArgs, signal?: AbortSignal): Promise<DiffSides> {
+      void signal
+      try {
+        const result = await remote.fileSides(args)
+        if (result.ok) return result.value
+        return { kind: 'error', message: result.error.message }
+      } catch (error) {
+        return { kind: 'error', message: messageOf(error) }
+      }
+    },
+    async requestCommitFiles(args: CommitDetailArgs, signal?: AbortSignal): Promise<CommitFilesPayload> {
+      void signal
+      try {
+        const result = await remote.commitFiles(args)
+        if (result.ok) return result.value
+        return { kind: 'error', message: result.error.message }
+      } catch (error) {
+        return { kind: 'error', message: messageOf(error) }
+      }
+    },
+    async requestCommitSides(args: CommitSidesArgs, signal?: AbortSignal): Promise<DiffSides> {
+      void signal
+      try {
+        const result = await remote.commitSides(args)
+        if (result.ok) return result.value
+        return { kind: 'error', message: result.error.message }
+      } catch (error) {
+        return { kind: 'error', message: messageOf(error) }
+      }
+    },
+    discardHunk(args: HunkArgs): Promise<WriteOutcome> {
+      return foldWrite(() => remote.discardHunk(args))
     },
     async history(sessionId: string, limit: number, skip: number, branch?: string): Promise<HistoryPage> {
       try {

@@ -175,9 +175,10 @@ export interface NumstatRecord {
 /**
  * Parse `git diff --numstat -z`.
  *
- * A rename or copy record carries no inline path: its counts are followed by an
- * empty field and then the two paths, so the record is identified by that empty
- * third field rather than by a missing one.
+ * A record's first two fields are its counts and the rest of the field is the
+ * path, so a path holding a tab survives. A rename or copy carries no path
+ * inline: its counts end at an empty third part, and the old and new paths
+ * arrive as the next two fields.
  * @param output - standard output.
  * @returns the records in Git's order; a rename record reports its new path.
  */
@@ -191,7 +192,7 @@ export function parseNumstat(output: string): NumstatRecord[] {
     const additions = parts[0] ?? ''
     const deletions = parts[1] ?? ''
     if (parts.length < 3) continue
-    if (parts.length === 3) {
+    if (parts.length === 3 && parts[2] === '') {
       const target = fields[index + 2]
       index += 2
       if (target !== undefined && target.length > 0) records.push({ additions, deletions, path: target })
@@ -209,6 +210,74 @@ export function parseNumstat(output: string): NumstatRecord[] {
  */
 export function isBinary(records: readonly NumstatRecord[]): boolean {
   return records.some(record => record.additions === '-' && record.deletions === '-')
+}
+
+/**
+ * List the paths a numstat listing reports as binary.
+ * @param records - parsed numstat records.
+ * @returns the binary paths, as a set the per-path readers can test.
+ */
+export function binaryPaths(records: readonly NumstatRecord[]): Set<string> {
+  const binary = new Set<string>()
+  for (const record of records) {
+    if (record.additions === '-' && record.deletions === '-') binary.add(record.path)
+  }
+  return binary
+}
+
+/** One record of `git diff --name-status -z`. */
+export interface NameStatusRecord {
+  /** Current path; the new path of a rename. */
+  readonly path: string
+  readonly status: ChangeStatus
+  /** Original path of a rename or copy; absent otherwise. */
+  readonly from?: string
+}
+
+/**
+ * Map one `--name-status` letter onto the panel's vocabulary.
+ * @param letter - the first character of the status field.
+ * @returns the change status, or undefined for a letter the vocabulary has no word for.
+ */
+function nameStatusOf(letter: string): ChangeStatus | undefined {
+  return letter === 'U' ? 'conflicted' : changeStatus(letter)
+}
+
+/**
+ * Parse `git diff --name-status -z` or `git diff-tree --name-status -z`.
+ *
+ * Every record is a status field followed by one path field, and a rename or
+ * copy carries a second path after the first: `R100\0old\0new\0`. The status
+ * letter is therefore what says how many fields the record owns, which is why
+ * it is read before the paths rather than after them.
+ * @param output - standard output of a `--name-status -z` command.
+ * @returns the records in Git's order; an unreadable status consumes one path
+ *   and is dropped, so a later record is never mistaken for a path.
+ */
+export function parseNameStatus(output: string): NameStatusRecord[] {
+  const fields = output.split(NUL)
+  const records: NameStatusRecord[] = []
+  for (let index = 0; index < fields.length; index += 1) {
+    const code = fields[index] ?? ''
+    if (code.length === 0) continue
+    const status = nameStatusOf(code.charAt(0))
+    const first = fields[index + 1] ?? ''
+    if (status === undefined) {
+      index += 1
+      continue
+    }
+    if (code.startsWith('R') || code.startsWith('C')) {
+      const second = fields[index + 2] ?? ''
+      index += 2
+      if (first.length === 0 || second.length === 0) continue
+      records.push({ path: second, status, from: first })
+      continue
+    }
+    index += 1
+    if (first.length === 0) continue
+    records.push({ path: first, status })
+  }
+  return records
 }
 
 /**
@@ -301,6 +370,10 @@ export function parsePatch(text: string): DiffHunk[] {
       continue
     }
     if (lines === undefined || line.length === 0) continue
+    // Git's "no newline at end of file" marker describes the line above it. It
+    // is not content, and counting it as a context line would shift every line
+    // number after it — including the block boundaries the actions use.
+    if (line.startsWith('\\')) continue
     const parsed = hunkLine(line, columns)
     if (parsed !== undefined) lines.push(parsed)
   }

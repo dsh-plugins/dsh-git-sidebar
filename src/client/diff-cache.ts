@@ -58,8 +58,9 @@ export function writeDiffCache(address: string, payload: DiffPayload): void {
 /**
  * Forget every payload.
  *
- * The refresh path calls this: a refresh is the reader saying the repository
- * moved, and a stored patch is a statement about a tree that no longer exists.
+ * A write and a refresh both call this: each is the reader saying the
+ * repository moved, and a stored patch is a statement about a tree that no
+ * longer exists.
  */
 export function clearDiffCache(): void {
   entries.clear()

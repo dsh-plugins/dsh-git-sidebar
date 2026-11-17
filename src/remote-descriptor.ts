@@ -21,7 +21,7 @@ export interface ZodLike {
   strictObject(shape: Record<string, unknown>): unknown
   string(): { optional(): unknown }
   boolean(): { optional(): unknown }
-  number(): unknown
+  number(): { optional(): unknown }
   array(item: unknown): { optional(): unknown }
 }
 
@@ -60,11 +60,11 @@ export interface RemoteContribution {
 
 /** Method names in the order the contract check expects to find them. */
 export const REMOTE_METHODS = [
-  'status', 'diff', 'stage', 'unstage', 'discard', 'commit',
-  'history', 'commitDetail', 'branches', 'checkout', 'createBranch',
+  'status', 'diff', 'fileSides', 'stage', 'unstage', 'discard', 'commit',
+  'history', 'commitDetail', 'commitFiles', 'commitSides', 'branches', 'checkout', 'createBranch',
   'stashes', 'stash', 'stashApply', 'stashDrop', 'sync',
   'conflict', 'resolveConflict', 'abortOperation',
-  'stageHunk', 'unstageHunk',
+  'stageHunk', 'unstageHunk', 'discardHunk',
   'deleteBranch', 'mergeBranch',
   'generateMessage',
   'repositories', 'selectRepository',
@@ -120,6 +120,7 @@ export function gitSidebarContribution(zod: ZodLike): RemoteContribution {
     descriptors: [
       descriptor('status', () => ({ sessionId: zod.string() })),
       descriptor('diff', () => ({ sessionId: zod.string(), path: zod.string(), staged: zod.boolean() })),
+      descriptor('fileSides', () => ({ sessionId: zod.string(), path: zod.string(), staged: zod.boolean() })),
       descriptor('stage', () => ({ sessionId: zod.string(), paths: strings() })),
       descriptor('unstage', () => ({ sessionId: zod.string(), paths: strings() })),
       descriptor('discard', () => ({ sessionId: zod.string(), paths: strings(), includeUntracked: zod.boolean() })),
@@ -137,6 +138,8 @@ export function gitSidebarContribution(zod: ZodLike): RemoteContribution {
         branch: zod.string().optional(),
       })),
       descriptor('commitDetail', () => ({ sessionId: zod.string(), sha: zod.string() })),
+      descriptor('commitFiles', () => ({ sessionId: zod.string(), sha: zod.string() })),
+      descriptor('commitSides', () => ({ sessionId: zod.string(), sha: zod.string(), path: zod.string() })),
       descriptor('branches', () => ({ sessionId: zod.string() })),
       descriptor('checkout', () => ({ sessionId: zod.string(), branch: zod.string() })),
       descriptor('createBranch', () => ({ sessionId: zod.string(), name: zod.string(), from: zod.string().optional() })),
@@ -156,8 +159,24 @@ export function gitSidebarContribution(zod: ZodLike): RemoteContribution {
         choices: strings(),
       })),
       descriptor('abortOperation', () => ({ sessionId: zod.string() })),
-      descriptor('stageHunk', () => ({ sessionId: zod.string(), path: zod.string(), hunk: zod.number() })),
-      descriptor('unstageHunk', () => ({ sessionId: zod.string(), path: zod.string(), hunk: zod.number() })),
+      descriptor('stageHunk', () => ({
+        sessionId: zod.string(),
+        path: zod.string(),
+        hunk: zod.number(),
+        region: zod.number().optional(),
+      })),
+      descriptor('unstageHunk', () => ({
+        sessionId: zod.string(),
+        path: zod.string(),
+        hunk: zod.number(),
+        region: zod.number().optional(),
+      })),
+      descriptor('discardHunk', () => ({
+        sessionId: zod.string(),
+        path: zod.string(),
+        hunk: zod.number(),
+        region: zod.number().optional(),
+      })),
       descriptor('deleteBranch', () => ({ sessionId: zod.string(), branch: zod.string(), force: zod.boolean() })),
       descriptor('mergeBranch', () => ({ sessionId: zod.string(), branch: zod.string() })),
       descriptor('generateMessage', () => ({ sessionId: zod.string(), staged: zod.boolean() })),

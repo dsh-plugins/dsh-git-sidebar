@@ -161,7 +161,7 @@ function cut(output: string, lossy: boolean, maxBytes: number): { patch: string;
  * @param path - the path from the browser.
  * @returns whether the path can be handed to Git after `--`.
  */
-function insideCheckout(path: string): boolean {
+export function insideCheckout(path: string): boolean {
   if (path.length === 0 || path.includes('\0') || path.startsWith('/') || /^[A-Za-z]:/.test(path)) return false
   return path.split(/[/\\]/).every(segment => segment !== '..')
 }

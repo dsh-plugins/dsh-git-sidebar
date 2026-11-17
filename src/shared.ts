@@ -192,6 +192,72 @@ export type DiffPayload =
   | { readonly kind: 'binary' }
   | { readonly kind: 'error'; readonly message: string }
 
+/**
+ * Both sides of one file's change.
+ *
+ * A patch says where lines differ; the Monaco diff editor compares two whole
+ * documents, so the viewer asks for the two texts the change implies instead of
+ * the hunks. A side that does not exist (an addition's old side, a deletion's
+ * new side) is the empty string.
+ */
+export type DiffSides =
+  | { readonly kind: 'text'; readonly oldText: string; readonly newText: string }
+  | { readonly kind: 'binary' }
+  /**
+   * One side is larger than the reader's cap. `bytes` is what the reader
+   * measured, which is a floor rather than the exact size when the read itself
+   * stopped at its own limit.
+   */
+  | { readonly kind: 'too-large'; readonly bytes: number }
+  | { readonly kind: 'error'; readonly message: string }
+
+/** Arguments of one file's two sides, on one side of the index. */
+export interface FileSidesArgs {
+  readonly sessionId: string
+  readonly path: string
+  /** True reads HEAD..index; false reads index..worktree. */
+  readonly staged: boolean
+}
+
+/** Arguments of one file's two sides, inside one commit. */
+export interface CommitSidesArgs {
+  readonly sessionId: string
+  readonly sha: string
+  /** Path relative to the repository root; the new path of a rename. */
+  readonly path: string
+}
+
+/** One file of a commit, as the diff viewer's file picker presents it. */
+export interface CommitFile {
+  /** Repository-relative path, the new path of a rename. */
+  readonly path: string
+  readonly status: ChangeStatus
+  /** Original path of a rename or copy; absent otherwise. */
+  readonly from?: string
+  /** True when the change is binary, so no two texts describe it. */
+  readonly binary: boolean
+  /** Lines added in this commit, 0 for binary content. */
+  readonly added: number
+  /** Lines removed in this commit, 0 for binary content. */
+  readonly removed: number
+}
+
+/** The result of asking for the files one commit changes. */
+export type CommitFilesPayload =
+  | {
+    readonly kind: 'files'
+    readonly files: readonly CommitFile[]
+    /**
+     * True when the commit has more than one parent.
+     *
+     * A merge has no single old side: the files, their line counts, and each
+     * file's two texts are all compared against the first parent, and the
+     * viewer says so instead of passing that choice off as the commit's own.
+     */
+    readonly merge?: boolean
+  }
+  | { readonly kind: 'error'; readonly message: string }
+
 /** Why a write refused, in terms the client can act on. */
 export type CommitProblem = 'identity-missing' | 'nothing-staged' | 'empty-message' | 'failed'
 
@@ -454,6 +520,14 @@ export interface HunkArgs {
   readonly path: string
   /** The hunk's position in the file's patch, counted from zero. */
   readonly hunk: number
+  /**
+   * The changed block inside that hunk, counted from zero.
+   *
+   * A block is Git's hunk split where its context lines break it, which is what
+   * the editor's per-block buttons name. Absent reads the whole hunk, which is
+   * what the textual viewer's per-hunk buttons send.
+   */
+  readonly region?: number
 }
 
 /** Arguments of an abort request. */

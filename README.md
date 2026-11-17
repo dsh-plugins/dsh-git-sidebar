@@ -21,6 +21,9 @@ DeepSeek Harness 的 Git 面板插件（`@dsh-plugin/dsh-git-sidebar`，仓库�
 | 未配置 `user.name`/`user.email` 时的提示 | 已实现 |
 | 放弃改动的确认对话框（未跟踪文件单独警告） | 已实现 |
 | 统一 diff 标签页，行级增删高亮 + 行号 | 已实现 |
+| 装了 `dsh-monaco` 时改用 Monaco 差异编辑器：比较两侧完整文件、语法高亮、并排/内联按宽度自适应 | 已实现 |
+| 差异里的块操作：按「变更块」逐块「暂存 / 回滚 / 取消暂存」，每块画一条高度线、按钮居中（并排时在中缝，内联时在最左侧） | 已实现 |
+| 提交差异逐文件预览：页头文件选择器，带状态字母与该文件增删行数 | 已实现 |
 | 提交历史**泳道图**（分叉/合并在图上连通，8 色泳道，refs 按类型上色） | 已实现 |
 | 分页、点开单提交 diff、折叠、方向键移动焦点 | 已实现 |
 | 分支选择器：列出 / 切换 / 新建；脏工作区拒绝切换 | 已实现 |
@@ -41,6 +44,11 @@ DeepSeek Harness 的 Git 面板插件（`@dsh-plugin/dsh-git-sidebar`，仓库�
 - 面板也能被 agent 打开：`git_repositories` 返回当前扫描到的仓库（root、相对路径、`submodule` / `worktree` 类型、哪个是当前），`git_open_repository` 接受绝对路径、相对路径或 `.`，选中后**自动把面板打开给用户看**。会话里这两次调用各自有一行工具卡片，卡片上的「打开 Git 面板」可以随时把面板叫回来。
 - 改动按「暂存更改」「更改」分组；把鼠标移到文件行上会显示操作按钮，键盘聚焦或触屏上常驻显示。
 - 点文件行本身在右侧栏打开该文件的 diff，可与其他标签页并存；点历史里的提交打开该提交自己的 diff。
+- 装了 `dsh-monaco` 后，差异标签页改用 Monaco 差异编辑器：比的是两侧**完整文件**，带语法高亮与联动滚动。宽度够（≥ 640px）时并排显示，不够时内联显示，拖动右侧栏宽度会即时切换。
+- 差异里的块按钮按**变更块**给出，而不是按 Git 的 hunk：Git 会把相邻改动（中间隔三条上下文以内）并成一个 hunk，编辑器再把它拆回连续的改动块，每块一对按钮，作用范围就是那一块——点第二块不会连带第一块。工作区侧是「回滚此块」和「暂存此块」，暂存区侧只有「取消暂存此块」，提交是历史、没有块按钮。
+- 每块在行号左侧的装订线里画一条**高度线**表示它覆盖几行，按钮竖排在这条线的中点：并排时这条装订线正是两个编辑窗的中缝，内联时它在最左侧；滚动、缩放后仍对准各自的块。鼠标悬停约半秒显示说明。退回补丁块视图时（未装 dsh-monaco 等），按钮改为按 hunk 给出。
+- 提交差异同样用编辑器，但一个提交跨多个文件，所以页头多一个文件选择器：逐文件查看，选项前缀是状态字母，页头右侧是该文件的 `+n -m`。合并提交没有唯一的旧侧，逐文件比较的是**第一父提交**，页头会写明这一点；补丁块视图对合并提交仍按 `git show` 的组合差异显示。
+- 没装 `dsh-monaco`、编辑器加载失败、某一侧超过 `maxSideBytes`、或者是二进制文件时，差异自动退回补丁块视图，并在顶部说明原因。
 - 提交框可用 `Ctrl+Enter`（macOS 上 `Cmd+Enter`）提交。暂存区为空时按钮变成「暂存全部并提交」；勾选「改写上次提交」可修改上一条提交信息（工作区干净时也能用）。
 - 储藏分组可储藏当前改动，逐条应用、弹出或删除。
 - 冲突文件点开进入逐区解决视图：每个冲突块显示双方内容与分支标签，可选保留当前 / 传入 / 两者（默认两者，因为不会丢行）。标记已解决会写回文件并暂存。
@@ -56,6 +64,8 @@ DeepSeek Harness 的 Git 面板插件（`@dsh-plugin/dsh-git-sidebar`，仓库�
 
 Remote 的方法表是手写的（`src/remote-descriptor.ts`），因为静态客户端包拿不到生成的 typert 产物。`run/contract.mjs` 校验该表、宿主服务方法与 wire 类型三者一致，防止改名漂移。
 
+差异有两种渲染。`src/client/diff-tab.ts` 画补丁块（`diff` / `commitDetail` 端点），不依赖任何编辑器；`src/client/diff-monaco.ts` 在 dsh-monaco 存在时用它的客户端服务 `ctx.monacoEditor`（`ready` + Monaco 命名空间）建一个只读差异编辑器。该插件声明为 **optional peerDependency**，不写进 `inject`：服务用 `ctx.get('monacoEditor')` 惰性读取，所以不装它面板照常工作，也不会因为两个客户端的加载顺序把面板挂起（dsh-monaco 的启动批次排在后面）。两侧完整文本由 `fileSides` / `commitFiles` / `commitSides` 提供——工作区侧读 `ctx.fs`，对象侧读 `git show`；块级写入由 `stageHunk` / `unstageHunk` / `discardHunk` 完成：请求带 `region` 时，`src/host/patch.ts` 的 `regionPatch` 把该块重建为**零上下文**补丁（`@@ -a,b +c,d @@`，单侧为 0 时起点前移一行），交给 `git apply --unidiff-zero` 单独回放；不带 `region` 时退回整 hunk 的老路径。
+
 配色参照 Monokai Pro 的语义分配，但落地在主题令牌上：当前分支/ref 用品牌色，新增用 success 令牌，删除与冲突用 error 令牌，次要文本用 label-secondary。
 
 ### 配置
@@ -65,6 +75,7 @@ Remote 的方法表是手写的（`src/remote-descriptor.ts`），因为静态�
 | `gitCommand` | `git` | git 可执行文件 |
 | `timeoutMs` / `syncTimeoutMs` / `graceMs` | 15000 / 60000 / 2000 | 单条命令的截止时间与退出宽限 |
 | `maxOutputBytes` / `maxDiffBytes` | 4 MiB / 1 MiB | 单条命令输出上限、diff 渲染上限 |
+| `maxSideBytes` | 2 MiB | 差异编辑器比较的单个文件文本上限；超过时退回补丁视图，不截断 |
 | `draftProvider` / `draftModel` / `draftPrompt` | 空 / 空 / 内置 | 生成提交信息用的路由与提示词 |
 | `draftMaxInputBytes` / `draftMaxOutputTokens` / `draftTimeoutMs` | 24576 / 512 / 45000 | 生成提交信息的限制 |
 | `scanDepth` | `2` | 向下扫描几层找仓库，会话工作目录为深度 0 |
@@ -83,6 +94,7 @@ git+https://github.com/dsh-plugins/dsh-git-sidebar.git
 - 地址必须以 `git+` 开头；裸 `https://` 不会被识别为 Git 仓库。
 - `lib/` 构建产物已提交入库，目标设备无需构建环境。
 - 安装后重启 DSH，右侧栏「开始」页即见 **Git 面板**。
+- 同时安装 `dsh-monaco`（`git+https://github.com/dsh-plugins/dsh-monaco.git`）后，差异视图自动升级为编辑器；不装也能用，只是退回补丁块渲染。
 
 ## 开发
 

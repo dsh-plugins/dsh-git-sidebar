@@ -10,11 +10,12 @@
 
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import {
-  BranchList, BranchListArgs, CheckoutArgs, CommitArgs, CommitDetailArgs, CommitOutcome, ConflictArgs,
-  ConflictChoice, ConflictContent, CreateBranchArgs, DeleteBranchArgs, DiffArgs, DiffPayload, DiscardArgs,
-  GenerateMessageArgs, HistoryArgs, HistoryPage, HunkArgs, MergeBranchArgs, MessageDraft, PathsArgs,
-  RepositoriesArgs, RepositoryList, ResolveConflictArgs, AbortArgs, SelectOutcome, SelectRepositoryArgs,
-  StashApplyArgs, StashArgs, StashDropArgs, StashEntry, StashListArgs, StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
+  BranchList, BranchListArgs, CheckoutArgs, CommitArgs, CommitDetailArgs, CommitFilesPayload, CommitOutcome,
+  CommitSidesArgs, ConflictArgs, ConflictChoice, ConflictContent, CreateBranchArgs, DeleteBranchArgs, DiffArgs,
+  DiffPayload, DiffSides, DiscardArgs, FileSidesArgs, GenerateMessageArgs, HistoryArgs, HistoryPage, HunkArgs,
+  MergeBranchArgs, MessageDraft, PathsArgs, RepositoriesArgs, RepositoryList, ResolveConflictArgs, AbortArgs,
+  SelectOutcome, SelectRepositoryArgs, StashApplyArgs, StashArgs, StashDropArgs, StashEntry, StashListArgs,
+  StatusArgs, StatusSnapshot, SyncArgs, WriteOutcome,
 } from '../shared.ts'
 import { REMOTE_METHODS } from '../remote-descriptor.ts'
 import {
@@ -28,9 +29,11 @@ import { readDiff, patchRunner, readPatch } from './diff.ts'
 import type { DiffConfig } from './diff.ts'
 import { GitFailure, GitMissingError, gitIn } from './git.ts'
 import type { GitConfig, GitRunner } from './git.ts'
-import { applyHunk, hunkPatch } from './hunk.ts'
+import { applyHunk } from './hunk.ts'
+import { hunkPatch, regionPatch } from './patch.ts'
 import { draftMessage, type DraftContext, type MessageConfig } from './message.ts'
 import { readBranches, readCommitDiff, readHistory, readOperation, readStashes, readUpstream } from './refs.ts'
+import { readCommitFileSides, readCommitFiles, readFileSides } from './sides.ts'
 import {
   describeRepository, mergeScanned, scanRepositories,
   type ScanConfig, type ScannedRepository,
@@ -46,6 +49,8 @@ const REMOTE_METHOD_DESCRIPTOR = '@deepseek-ai/dsh-typert-protocol/remote-method
 export interface ServiceConfig extends DiffConfig {
   /** Git executable name or absolute path. */
   readonly gitCommand: string
+  /** Largest text one side of a diff may carry before the viewer refuses it. */
+  readonly maxSideBytes: number
   /** Deadline for one network command such as fetch, pull, or push. */
   readonly syncTimeoutMs: number
   /** Route, prompt, and limits for the commit-message draft. */
@@ -190,6 +195,28 @@ export class GitSidebarService extends TypertRemoteService {
   }
 
   /**
+   * Read both sides of one file's change, for the diff editor.
+   * @param args - the Session, the path, and which side to read.
+   * @returns the two texts, a binary notice, or the reason they are unavailable.
+   */
+  async fileSides(args?: FileSidesArgs): Promise<DiffSides> {
+    const session = this.sessionOf(args?.sessionId)
+    if (session === undefined || typeof args?.path !== 'string') {
+      return { kind: 'error', message: 'fileSides requires a session and a path' }
+    }
+    const directory = this.directoryOf(session)
+    if (directory === undefined) return { kind: 'error', message: 'the session has no working directory' }
+    return await readFileSides(
+      this.home,
+      this.config,
+      session,
+      this.baseOf(session, directory),
+      { path: args.path, staged: args.staged === true },
+      this.signalOf(),
+    )
+  }
+
+  /**
    * Read one page of the commit history.
    * @param args - the Session, the page size, and the offset.
    * @returns the page, or an empty one when the Session has no checkout.
@@ -224,6 +251,39 @@ export class GitSidebarService extends TypertRemoteService {
       sessionId: target.session.id,
       sha: args.sha,
     }, this.signalOf())
+  }
+
+  /**
+   * List the files one commit changes, for the diff editor's file picker.
+   * @param args - the Session and the commit to describe.
+   * @returns the files, or the reason they are unavailable.
+   */
+  async commitFiles(args?: CommitDetailArgs): Promise<CommitFilesPayload> {
+    const target = this.targetOf(args?.sessionId)
+    if (target === undefined || typeof args?.sha !== 'string') {
+      return { kind: 'error', message: 'commitFiles requires a session and a commit' }
+    }
+    return await readCommitFiles(this.home, this.config, target.session, target.base, args.sha, this.signalOf())
+  }
+
+  /**
+   * Read both sides of one file inside one commit.
+   * @param args - the Session, the commit, and the path.
+   * @returns the two texts, a binary notice, or the reason they are unavailable.
+   */
+  async commitSides(args?: CommitSidesArgs): Promise<DiffSides> {
+    const target = this.targetOf(args?.sessionId)
+    if (target === undefined || typeof args?.sha !== 'string' || typeof args?.path !== 'string') {
+      return { kind: 'error', message: 'commitSides requires a session, a commit, and a path' }
+    }
+    return await readCommitFileSides(
+      this.home,
+      this.config,
+      target.session,
+      target.base,
+      { sha: args.sha, path: args.path },
+      this.signalOf(),
+    )
   }
 
   /**
@@ -528,6 +588,38 @@ export class GitSidebarService extends TypertRemoteService {
   }
 
   /**
+   * Roll one hunk of a file's unstaged diff back out of the working tree.
+   *
+   * The patch is read again here, exactly as a staging write does, so the
+   * position the browser sends names a hunk of the diff Git reports now. The
+   * one-hunk patch is replayed backwards against the file itself, which is the
+   * rollback; the index is never touched.
+   * @param args - the Session, the path, and the hunk's position.
+   * @returns the new snapshot, or the refusal.
+   */
+  async discardHunk(args?: HunkArgs): Promise<WriteOutcome> {
+    const path = typeof args?.path === 'string' ? args.path : ''
+    if (path.length === 0) return { ok: false, problem: 'no-paths', message: 'no path was given' }
+    if (typeof args?.hunk !== 'number' || !Number.isInteger(args.hunk) || args.hunk < 0) return staleHunk()
+    const hunk = args.hunk
+    const region = blockOf(args.region)
+    return await this.writeWith(args.sessionId, async (git, session, root) => {
+      const patcher = patchRunner(this.home, this.config, session, root, this.signalOf())
+      const capture = await readPatch(patcher, { path, staged: false }, this.config.maxDiffBytes)
+      if (capture.kind === 'error') return { ok: false, problem: 'failed', message: capture.message }
+      if (capture.kind === 'binary') {
+        return { ok: false, problem: 'failed', message: 'the file has no textual diff to roll back' }
+      }
+      if (capture.lossy) return staleHunk()
+      const patch = region === undefined
+        ? hunkPatch(capture.patch, hunk)
+        : regionPatch(capture.patch, hunk, region)
+      if (patch === undefined) return staleHunk()
+      return await applyHunk(git, patch, true, 'worktree')
+    })
+  }
+
+  /**
    * Restore the given paths from the index, optionally removing untracked files.
    * @param args - the Session, the paths, and whether untracked files go too.
    * @returns the new snapshot, or the refusal.
@@ -619,6 +711,7 @@ export class GitSidebarService extends TypertRemoteService {
     if (path.length === 0) return { ok: false, problem: 'no-paths', message: 'no path was given' }
     if (typeof args?.hunk !== 'number' || !Number.isInteger(args.hunk) || args.hunk < 0) return staleHunk()
     const hunk = args.hunk
+    const region = blockOf(args.region)
     return await this.writeWith(args.sessionId, async (git, session, root) => {
       const patcher = patchRunner(this.home, this.config, session, root, this.signalOf())
       const capture = await readPatch(patcher, { path, staged: reverse }, this.config.maxDiffBytes)
@@ -627,7 +720,9 @@ export class GitSidebarService extends TypertRemoteService {
         return { ok: false, problem: 'failed', message: 'the file has no textual diff to apply' }
       }
       if (capture.lossy) return staleHunk()
-      const patch = hunkPatch(capture.patch, hunk)
+      const patch = region === undefined
+        ? hunkPatch(capture.patch, hunk)
+        : regionPatch(capture.patch, hunk, region)
       if (patch === undefined) return staleHunk()
       return await applyHunk(git, patch, reverse)
     })
@@ -789,6 +884,16 @@ function isRepositoryPath(path: string): boolean {
 /** The refusal a hunk write returns when the diff it was asked about is no longer the current one. */
 function staleHunk(): WriteOutcome {
   return { ok: false, problem: 'stale', message: '差异已变化，请刷新后重试' }
+}
+
+/**
+ * Read the block a write names, if it names one.
+ * @param value - the block index from the wire.
+ * @returns the index, or undefined when the caller asked for the whole hunk.
+ */
+function blockOf(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return undefined
+  return value
 }
 
 /**

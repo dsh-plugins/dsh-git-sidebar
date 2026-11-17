@@ -16,7 +16,7 @@ export interface IconReactSurface {
 }
 
 /** Material Symbols grid the paths below are authored on. */
-const VIEW_BOX = '0 -960 960 960'
+export const VIEW_BOX = '0 -960 960 960'
 
 /**
  * The panel's glyphs, keyed by what they mean rather than by their Material
