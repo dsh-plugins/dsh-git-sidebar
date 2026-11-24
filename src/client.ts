@@ -18,6 +18,7 @@
  * each stylesheet is injected as a `<style>` element the plugin's effect owns.
  */
 
+import { injectStyle, UI_SERVICE } from '@dsh-plugin/dsh-loader/client'
 import type {
   CommitDetailArgs, CommitFilesPayload, CommitSidesArgs, DiffArgs, DiffPayload, DiffSides,
 } from './shared.ts'
@@ -40,15 +41,6 @@ const SOURCE = '@dsh-plugin/dsh-git-sidebar'
 
 /** Copy namespace of the panel. */
 const NS = 'gitSidebar'
-
-/** The bundle's loader entry point, absent from the standard DOM typings. */
-interface ModuleLoaderHost {
-  __ModuleLoader__: {
-    load(registration: { id: string; factory: (require: (name: string) => unknown) => unknown }): void
-  }
-}
-
-const loader = (globalThis as unknown as ModuleLoaderHost).__ModuleLoader__
 
 /** Every string the panel and its dialogs show, in the two shipped languages. */
 const DICTS: Record<string, Record<string, string>> = {
@@ -434,27 +426,6 @@ const DICTS: Record<string, Record<string, string>> = {
 }
 
 /**
- * Mount one stylesheet as a `<style>` element the plugin's effect owns, so a
- * disabled or reloaded plugin leaves no rules behind. The sidebar's own module
- * system claims and removes the tags a factory injects, which is why the plugin
- * and the sheet are both tagged.
- * @param ctx - the bundle's context.
- * @param sheet - the rules to mount.
- * @param name - the sheet's identity within this package.
- */
-function installStyles(ctx: GitClientContext, sheet: string, name: string): void {
-  ctx.effect(() => {
-    if (typeof document === 'undefined') return
-    const tag = document.createElement('style')
-    tag.dataset.plugin = SOURCE
-    tag.dataset.pluginCss = `${SOURCE}/${name}`
-    tag.textContent = sheet
-    document.head.appendChild(tag)
-    return () => { tag.remove() }
-  }, `git-sidebar: ${name}`)
-}
-
-/**
  * Read one file's diff, through the cache when that address has been read.
  *
  * The cache is keyed by the address rather than by the arguments, so the same
@@ -570,123 +541,119 @@ function editorService(ctx: GitClientContext): () => MonacoEditorFace | undefine
   }
 }
 
-loader.load({
-  id: SOURCE,
-  factory(requireModule) {
-    const React = requireModule('react') as ReactLike
-    const zod = resolveZod(requireModule('zod'))
-    const GuideIcon = GitGuideIcon(React)
+export const name = SOURCE
+export const inject = [UI_SERVICE, 'remote', 'slots', 'locale', 'sidebarRightTabs', 'sidebarRight']
 
-    return {
-      inject: ['remote', 'slots', 'locale', 'sidebarRightTabs', 'sidebarRight'],
-      apply(ctx: GitClientContext) {
-        ctx.effect(() => ctx.locale.register(NS, DICTS), 'git-sidebar: dictionaries')
-        ctx.effect(() => ctx.locale.register(DIFF_LOCALE_NS, DIFF_DICTS), 'git-sidebar: diff dictionaries')
-        const t = ctx.locale.bind(NS)
-        installStyles(ctx, PANEL_STYLES, 'panel.css')
-        installStyles(ctx, DIFF_STYLES, 'diff.css')
+/** 注册 Git 页签、工具卡和远程接口，所有注册随插件卸载。 */
+export function apply(ctx: GitClientContext): void {
+  const React = require('react') as ReactLike
+  const zod = resolveZod(require('zod'))
+  const GuideIcon = GitGuideIcon(React)
 
-        if (zod === undefined) {
-          // The namespace cannot be mounted without the descriptor codecs, so
-          // the panel says so instead of failing every call at draw time.
-          console.error(`git-sidebar: the loader module table has no zod; ${SOURCE} mounts no Remote`)
-        }
-        const remote: GitRemoteHandle = zod === undefined
-          ? { ready: Promise.reject(new Error('git-sidebar: zod is unavailable')) }
-          : mountGitRemote(ctx, zod)
-        void remote.ready.catch(() => undefined)
-        // The panel's read-through cache lives as long as this activation, which
-        // is what lets a closed and reopened tab paint without asking again.
-        const panelCache = createPanelCache()
-        // Stage one: what the panel's tab type is, plus its Start-page button.
-        // A page type names no resource patterns and is opened by kind.
-        ctx.effect(() => ctx.sidebarRightTabs.register({
-          id: PANEL_TAB_ID,
-          kind: PANEL_TAB_KIND,
-          title: () => t('panel.label'),
-          guide: [{
-            id: 'open',
-            // Workspace files is 10 and Code review 15: 12 sits directly below
-            // the first button.
-            order: 12,
-            title: () => t('guide.title'),
-            description: () => t('guide.description'),
-            icon: GuideIcon,
-          }],
-        }), 'git-sidebar: tab type')
+  ctx.effect(() => ctx.locale.register(NS, DICTS), 'git-sidebar: dictionaries')
+  ctx.effect(() => ctx.locale.register(DIFF_LOCALE_NS, DIFF_DICTS), 'git-sidebar: diff dictionaries')
+  const t = ctx.locale.bind(NS)
+  ctx.effect(() => injectStyle(SOURCE, 'panel.css', PANEL_STYLES), 'git-sidebar: panel styles')
+  ctx.effect(() => injectStyle(SOURCE, 'diff.css', DIFF_STYLES), 'git-sidebar: diff styles')
 
-        const Panel = makePanel(React, {
-          api: remote,
-          t,
-          tab: (props: TabBodyProps) => (props.useTabInfo === undefined ? undefined : props.useTabInfo().tab),
-          // One cache per activation: closing the panel tab unmounts its body,
-          // and the next mount is what has to read this instead of the Host.
-          cache: panelCache,
-          clearDiffCache,
-        })
+  if (zod === undefined) {
+    // The namespace cannot be mounted without the descriptor codecs, so
+    // the panel says so instead of failing every call at draw time.
+    console.error(`git-sidebar: the loader module table has no zod; ${SOURCE} mounts no Remote`)
+  }
+  const remote: GitRemoteHandle = zod === undefined
+    ? { ready: Promise.reject(new Error('git-sidebar: zod is unavailable')) }
+    : mountGitRemote(ctx, zod)
+  void remote.ready.catch(() => undefined)
+  // The panel's read-through cache lives as long as this activation, which
+  // is what lets a closed and reopened tab paint without asking again.
+  const panelCache = createPanelCache()
+  // Stage one: what the panel's tab type is, plus its Start-page button.
+  // A page type names no resource patterns and is opened by kind.
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    id: PANEL_TAB_ID,
+    kind: PANEL_TAB_KIND,
+    title: () => t('panel.label'),
+    guide: [{
+      id: 'open',
+      // Workspace files is 10 and Code review 15: 12 sits directly below
+      // the first button.
+      order: 12,
+      title: () => t('guide.title'),
+      description: () => t('guide.description'),
+      icon: GuideIcon,
+    }],
+  }), 'git-sidebar: tab type')
 
-        // Stage two: the panel body under the type's id.
-        ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-          name: 'sidebar.right.pane.tab',
-          key: PANEL_TAB_ID,
-          locale: NS,
-        }, Panel)), 'git-sidebar: panel body')
+  const Panel = makePanel(React, {
+    api: remote,
+    t,
+    tab: (props: TabBodyProps) => (props.useTabInfo === undefined ? undefined : props.useTabInfo().tab),
+    // One cache per activation: closing the panel tab unmounts its body,
+    // and the next mount is what has to read this instead of the Host.
+    cache: panelCache,
+    clearDiffCache,
+  })
 
-        // The diff viewer: the same two-stage path under its own id. Its body
-        // is built with the loader's React and reads a file, or a commit's own
-        // patch, through the same Remote namespace. The editor half is wired
-        // only to readers it may call: dsh-monaco's service is read lazily, and
-        // without it the body stays on the textual rendering.
-        const DiffBody = makeDiffBody(React, {
-          requestDiff: diffReader(remote),
-          requestCommit: commitReader(remote),
-          requestSides: sidesReader(remote),
-          requestCommitFiles: commitFilesReader(remote),
-          requestCommitSides: commitSidesReader(remote),
-          moveHunk: (args, direction) => remote.ready.then(api =>
-            direction === 'unstage' ? api.unstageHunk(args) : api.stageHunk(args)),
-          discardHunk: args => remote.ready.then(api => api.discardHunk(args)),
-          editor: editorService(ctx),
-          onThemeChange: listener => ctx.on('theme/change', () => { listener() }),
-          t: ctx.locale.bind(DIFF_LOCALE_NS),
-          stylesInstalled: true,
-        })
-        ctx.effect(() => ctx.sidebarRightTabs.register(DIFF_TAB_DEFINITION), 'git-sidebar: diff tab type')
-        ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-          name: 'sidebar.right.pane.tab',
-          key: DIFF_TAB_ID,
-          locale: DIFF_LOCALE_NS,
-        }, DiffBody)), 'git-sidebar: diff body')
+  // Stage two: the panel body under the type's id.
+  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+    name: 'sidebar.right.pane.tab',
+    key: PANEL_TAB_ID,
+    locale: NS,
+  }, Panel)), 'git-sidebar: panel body')
 
-        // The tools' own conversation rows. A Host tool cannot open a tab by
-        // itself, so the row for the opening tool is where the panel reaches the
-        // screen: it clears what belongs to the checkout the reader left, then
-        // asks the navigation controller for the panel's tab. The controller
-        // throws while no Session is on the screen, which the row reports back so
-        // the call stays openable by a later render.
-        const openPanel = (): boolean => {
-          try {
-            invalidateAll(panelCache)
-            ctx.sidebarRight.openTab(PANEL_TAB_KIND)
-            return true
-          } catch {
-            return false
-          }
-        }
-        const toolDeps = { t, openPanel }
-        const OpenRow = makeGitToolRow(React, toolDeps, 'open')
-        const ListRow = makeGitToolRow(React, toolDeps, 'list')
-        ctx.effect(() => ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
-          name: 'tool.call.toolview',
-          key: GIT_TOOL_NAMES.open,
-          locale: NS,
-        }, OpenRow)), 'git-sidebar: open tool row')
-        ctx.effect(() => ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
-          name: 'tool.call.toolview',
-          key: GIT_TOOL_NAMES.list,
-          locale: NS,
-        }, ListRow)), 'git-sidebar: list tool row')
-      },
+  // The diff viewer: the same two-stage path under its own id. Its body
+  // is built with the loader's React and reads a file, or a commit's own
+  // patch, through the same Remote namespace. The editor half is wired
+  // only to readers it may call: dsh-monaco's service is read lazily, and
+  // without it the body stays on the textual rendering.
+  const DiffBody = makeDiffBody(React, {
+    requestDiff: diffReader(remote),
+    requestCommit: commitReader(remote),
+    requestSides: sidesReader(remote),
+    requestCommitFiles: commitFilesReader(remote),
+    requestCommitSides: commitSidesReader(remote),
+    moveHunk: (args, direction) => remote.ready.then(api =>
+      direction === 'unstage' ? api.unstageHunk(args) : api.stageHunk(args)),
+    discardHunk: args => remote.ready.then(api => api.discardHunk(args)),
+    editor: editorService(ctx),
+    onThemeChange: listener => ctx.on('theme/change', () => { listener() }),
+    t: ctx.locale.bind(DIFF_LOCALE_NS),
+    stylesInstalled: true,
+  })
+  ctx.effect(() => ctx.sidebarRightTabs.register(DIFF_TAB_DEFINITION), 'git-sidebar: diff tab type')
+  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+    name: 'sidebar.right.pane.tab',
+    key: DIFF_TAB_ID,
+    locale: DIFF_LOCALE_NS,
+  }, DiffBody)), 'git-sidebar: diff body')
+
+  // The tools' own conversation rows. A Host tool cannot open a tab by
+  // itself, so the row for the opening tool is where the panel reaches the
+  // screen: it clears what belongs to the checkout the reader left, then
+  // asks the navigation controller for the panel's tab. The controller
+  // throws while no Session is on the screen, which the row reports back so
+  // the call stays openable by a later render.
+  const openPanel = (): boolean => {
+    try {
+      invalidateAll(panelCache)
+      ctx.sidebarRight.openTab(PANEL_TAB_KIND)
+      return true
+    } catch {
+      return false
     }
-  },
-})
+  }
+  const toolDeps = { t, openPanel }
+  const OpenRow = makeGitToolRow(React, toolDeps, 'open')
+  const ListRow = makeGitToolRow(React, toolDeps, 'list')
+  ctx.effect(() => ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
+    name: 'tool.call.toolview',
+    key: GIT_TOOL_NAMES.open,
+    locale: NS,
+  }, OpenRow)), 'git-sidebar: open tool row')
+  ctx.effect(() => ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
+    name: 'tool.call.toolview',
+    key: GIT_TOOL_NAMES.list,
+    locale: NS,
+  }, ListRow)), 'git-sidebar: list tool row')
+}

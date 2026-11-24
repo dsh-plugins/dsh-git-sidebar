@@ -85,14 +85,12 @@ Remote 的方法表是手写的（`src/remote-descriptor.ts`），因为静态�
 
 ## 安装
 
-通过「插件管理器 → 添加插件 → 安装第三方插件」粘贴仓库地址：
+在 DSH `0.2.3-alpha.2` 安装并启用 loader 后，从 npm 安装 Git 面板开发版：
 
+```sh
+dsh plugin --profile web add @dsh-plugin/dsh-loader@next
+dsh plugin --profile web add @dsh-plugin/dsh-git-sidebar@next
 ```
-git+https://github.com/dsh-plugins/dsh-git-sidebar.git
-```
-
-- 地址必须以 `git+` 开头；裸 `https://` 不会被识别为 Git 仓库。
-- `lib/` 构建产物已提交入库，目标设备无需构建环境。
 - 安装后重启 DSH，右侧栏「开始」页即见 **Git 面板**。
 - 同时安装 `dsh-monaco`（`git+https://github.com/dsh-plugins/dsh-monaco.git`）后，差异视图自动升级为编辑器；不装也能用，只是退回补丁块渲染。
 

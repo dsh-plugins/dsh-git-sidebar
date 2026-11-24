@@ -21,6 +21,7 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
+    "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
@@ -34,16 +35,17 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node build.mjs",
+    "build": "tsc -p tsconfig.json && node build.mjs && tsdown --config tsdown.client.config.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --test \"tests/*.test.ts\""
   },
   "dependencies": {
-    "@deepseek-ai/dsh-typert-protocol": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.3-alpha.2",
     "@deepseek-ai/schemastery": "^3.19.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.1.0",
+    "@dsh-plugin/dsh-loader": "^2.0.0-dev.45328381034",
+    "@deepseek-ai/cordis": "~4.2.0-alpha.1",
     "@dsh-plugin/dsh-monaco": ">=0.1.0-0"
   },
   "peerDependenciesMeta": {
@@ -52,14 +54,16 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.1.0",
+    "@dsh-plugin/dsh-loader": "2.0.0-dev.45328381034",
+    "@deepseek-ai/cordis": "~4.2.0-alpha.1",
     "@types/node": "^22.10.0",
     "esbuild": "^0.28.2",
+    "tsdown": "^0.22.14",
     "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=24.9.0",
-    "dsh": ">=0.2.0-0"
+    "dsh": ">=0.2.3-alpha.2 <0.2.4-0"
   },
   "dsh": {
     "bundle": {
@@ -67,8 +71,9 @@
     },
     "client": {
       "platform": "web",
-      "immediately": true,
+      "external": ["@dsh-plugin/dsh-loader/client"],
       "inject": [
+        "@dsh-plugin/dsh-loader",
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-client-ui-sidebar-right"
       ]

@@ -19,7 +19,7 @@ import { createGitTools } from './host/tools.ts'
 export const name = '@dsh-plugin/dsh-git-sidebar'
 
 /** Services required before the endpoints can run. */
-export const inject = ['subprocess', 'sandbox', 'sandboxPolicy', 'workingDirectory', 'sessions', 'fs', 'llm']
+export const inject = ['dshLoader', 'subprocess', 'sandbox', 'sandboxPolicy', 'workingDirectory', 'sessions', 'fs', 'llm']
 
 /** Instruction the model follows when wording a commit message. */
 const DEFAULT_DRAFT_PROMPT = [
@@ -148,7 +148,7 @@ function registerTools(ctx: HostContext, service: GitSidebarService): void {
     if (tools === undefined) return
     for (const definition of createGitTools(service)) {
       try {
-        tools.register(definition)
+        tools.register(ctx.dshLoader.dsh.tools.defineTool(definition))
       } catch (error) {
         // A tool name another plugin already claimed must not disable the panel:
         // the other tools stay useful, and the failure is worth one line.

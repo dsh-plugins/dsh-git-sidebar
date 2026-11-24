@@ -7,6 +7,8 @@
  * packages and stays loadable against any Host build that provides them.
  */
 
+import type { HostAPI } from '@dsh-plugin/dsh-loader'
+
 /** One Session as the Git runner needs it: an identity the Session services key on. */
 export interface HostSession {
   readonly id: string
@@ -182,6 +184,7 @@ export interface ToolsService {
 
 /** The Cordis context face the host half consumes. */
 export interface HostContext {
+  readonly dshLoader: HostAPI
   readonly subprocess: SubprocessService
   readonly sandbox: SandboxService
   readonly sandboxPolicy: SandboxPolicyService
