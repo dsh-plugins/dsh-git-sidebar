@@ -2,3 +2,6 @@
 # 因此显式放行。pnpm 11 默认把未放行的依赖构建脚本视为安装失败。
 allowBuilds:
   esbuild: true
+# 仅放行已核对提交与 tarball 校验值的 loader 精确版本。
+minimumReleaseAgeExclude:
+  - '@dsh-plugin/dsh-loader@2.0.0-dev.45328381034'
