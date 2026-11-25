@@ -85,7 +85,7 @@ Remote 的方法表是手写的（`src/remote-descriptor.ts`），因为静态�
 
 ## 安装
 
-在 DSH `0.2.3-alpha.2` 安装并启用 loader 后，从 npm 安装 Git 面板开发版：
+在 DSH `0.2.2-rc.3` 至 `0.2.2-rc.5` 或 `0.2.3-alpha.2` 安装并启用 loader 后，从 npm 安装 Git 面板开发版：
 
 ```sh
 dsh plugin --profile web add @dsh-plugin/dsh-loader@next

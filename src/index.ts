@@ -12,7 +12,7 @@
 
 import z from '@deepseek-ai/schemastery'
 import type { HostContext } from './host/context.ts'
-import { GitSidebarService, type ServiceConfig } from './host/service.ts'
+import { createGitSidebarService, type ServiceConfig } from './host/service.ts'
 import { createGitTools } from './host/tools.ts'
 
 /** Stable Cordis plugin name. */
@@ -132,7 +132,7 @@ export function apply(ctx: HostContext, config: GitSidebarConfig): void {
   if (typeof resolved.gitCommand !== 'string' || resolved.gitCommand.trim().length === 0) {
     throw new Error('git-sidebar: gitCommand must not be empty')
   }
-  const service = new GitSidebarService(ctx, serviceConfig(resolved))
+  const service = createGitSidebarService(ctx, serviceConfig(resolved))
   registerTools(ctx, service)
 }
 
@@ -141,7 +141,7 @@ export function apply(ctx: HostContext, config: GitSidebarConfig): void {
  * @param ctx - owning Cordis context.
  * @param service - the service whose scan and selection the tools reuse.
  */
-function registerTools(ctx: HostContext, service: GitSidebarService): void {
+function registerTools(ctx: HostContext, service: ReturnType<typeof createGitSidebarService>): void {
   if (ctx.inject === undefined) return
   ctx.inject(['tools'], (scoped) => {
     const tools = scoped.tools

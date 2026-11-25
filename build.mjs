@@ -8,5 +8,5 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node24',
-  external: ['@deepseek-ai/cordis', '@deepseek-ai/dsh-typert-protocol', '@dsh-plugin/dsh-loader'],
+  external: ['@deepseek-ai/cordis', '@dsh-plugin/dsh-loader'],
 })
